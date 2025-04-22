@@ -32,6 +32,8 @@ class MIDIManager: ObservableObject {
     private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
     private var pendingFrame: [UInt8]?
     
+    private let maxSysExSize = 1024 * 16 // 16KB should be plenty for OLED frames
+    
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
         for i in 0..<8 {
@@ -154,12 +156,24 @@ class MIDIManager: ObservableObject {
     
     private func handleMIDIPacket(_ packet: UnsafePointer<MIDIPacket>) {
         let length = Int(packet.pointee.length)
-        let bytePtr = withUnsafeBytes(of: packet.pointee.data) {
-            $0.bindMemory(to: UInt8.self).prefix(length)
+        
+        // Safety check for packet length
+        guard length > 0, length <= maxSysExSize else {
+            print("Invalid MIDI packet length: \(length)")
+            return
         }
-        let bytes = Array(bytePtr)
+        
+        // Use withUnsafeBytes for safe memory access
+        let bytes = withUnsafeBytes(of: packet.pointee.data) { buffer in
+            Array(buffer.prefix(length))
+        }
         
         for byte in bytes {
+            if sysExBuffer.count >= maxSysExSize {
+                print("SysEx buffer overflow, clearing")
+                sysExBuffer.removeAll()
+                return
+            }
             sysExBuffer.append(byte)
             if byte == 0xf7 {
                 processSysEx(sysExBuffer)
@@ -169,11 +183,25 @@ class MIDIManager: ObservableObject {
     }
     
     private func processSysEx(_ bytes: [UInt8]) {
-        guard bytes.count >= 7 else { return }
-        guard bytes[0] == 0xf0, bytes[1] == 0x7d, bytes[2] == 0x02, bytes[3] == 0x40 else { return }
+        // Additional safety checks
+        guard bytes.count >= 7,
+              bytes.count <= maxSysExSize,
+              bytes[0] == 0xf0,
+              bytes[1] == 0x7d,
+              bytes[2] == 0x02,
+              bytes[3] == 0x40 else {
+            return
+        }
         
         let messageType = bytes[4]
-        let body = Array(bytes[6..<(bytes.count - 1)])
+        
+        // Safety check for body extraction
+        guard bytes.count >= 7,
+              bytes.last == 0xf7 else {
+            return
+        }
+        
+        let body = Array(bytes[6...(bytes.count - 2)])
         
         if messageType == 0x01 { // Full frame only
             do {
@@ -183,8 +211,8 @@ class MIDIManager: ObservableObject {
                     return
                 }
                 
-                DispatchQueue.main.async {
-                    self.frameBuffer = unpacked
+                DispatchQueue.main.async { [weak self] in
+                    self?.frameBuffer = unpacked
                 }
             } catch {
                 print("Frame decode error: \(error)")
