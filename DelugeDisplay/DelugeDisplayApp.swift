@@ -14,7 +14,7 @@ enum DisplayMode {
 
 @main
 struct DelugeDisplayApp: App {
-    @State private var displayMode: DisplayMode = .oled
+    @State private var displayMode: DelugeDisplayMode = .oled
 
     init()
     {
@@ -80,8 +80,8 @@ struct DelugeDisplayApp: App {
                     .keyboardShortcut("1", modifiers: .command)
                 
                 Toggle("Show 7SEG", isOn: Binding(
-                    get: { displayMode == .sevenSeg },
-                    set: { if $0 { displayMode = .sevenSeg } }
+                    get: { displayMode == .sevenSegment },
+                    set: { if $0 { displayMode = .sevenSegment } }
                 ))
                     .keyboardShortcut("2", modifiers: .command)
             }
