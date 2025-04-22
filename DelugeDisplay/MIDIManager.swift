@@ -5,6 +5,10 @@ class MIDIManager: ObservableObject {
     @Published var isConnected = false
     @Published var frameBuffer: [UInt8] = Array(repeating: 0, count: 128 * 6)
     
+    private let expectedFrameSize = 128 * 6
+    private let frameTimeout: TimeInterval = 0.1
+    private let maxDeltaFails = 3
+    
     private var client: MIDIClientRef = 0
     private var inputPort: MIDIPortRef = 0
     private var outputPort: MIDIPortRef = 0
@@ -14,11 +18,29 @@ class MIDIManager: ObservableObject {
     private var fullFrameInitialized = false
     private var updateTimer: Timer?
     private var fullFrameTimer: Timer?
+    private var lastFrameTime = Date()
     private var deltaFailCount = 0
-    private let maxDeltaFails = 3
     
+    private let screenWidth = 128
+    private let screenHeight = 48
+    private let bytesPerRow = 128
+    private let numRows = 6
+    
+    private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
     private let delugePortName = "Port 3"
-    private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7] // Changed to always request full frames
+    
+    private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
+    private var pendingFrame: [UInt8]?
+    
+    private func flipByte(_ byte: UInt8) -> UInt8 {
+        var flipped: UInt8 = 0
+        for i in 0..<8 {
+            if (byte & (1 << i)) != 0 {
+                flipped |= (1 << (7 - i))
+            }
+        }
+        return flipped
+    }
     
     deinit {
         disconnect()
@@ -49,7 +71,6 @@ class MIDIManager: ObservableObject {
     }
     
     private func connectToDeluge() {
-        // Find Deluge ports
         for i in 0..<MIDIGetNumberOfDestinations() {
             let endpoint = MIDIGetDestination(i)
             var name: Unmanaged<CFString>?
@@ -76,32 +97,42 @@ class MIDIManager: ObservableObject {
         MIDIPortConnectSource(inputPort, input, nil)
         
         startUpdateTimer()
-        startFullFrameTimer()
         
         isConnected = true
     }
     
     private func startUpdateTimer() {
         updateTimer?.invalidate()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.sendOLEDRequest()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.requestFullFrame()
         }
     }
     
-    private func startFullFrameTimer() {
-        fullFrameTimer?.invalidate()
-        fullFrameTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.requestFullFrame()
+    private func checkFrameTimeout() {
+        if Date().timeIntervalSince(lastFrameTime) > frameTimeout {
+            requestFullFrame()
+        }
+    }
+    
+    private func updateFrameBuffer(_ newFrame: [UInt8]) {
+        frameQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Validate frame size
+            guard newFrame.count == 128 * 6 else {
+                print("Invalid frame size in update: \(newFrame.count)")
+                return
+            }
+            
+            DispatchQueue.main.async {
+                self.frameBuffer = newFrame
+                self.lastFrameTime = Date()
+            }
         }
     }
     
     private func requestFullFrame() {
         sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
-        fullFrameInitialized = false
-    }
-    
-    private func sendOLEDRequest() {
-        sendSysEx(oledRequestSysex)
     }
     
     private func sendSysEx(_ data: [UInt8]) {
@@ -144,62 +175,26 @@ class MIDIManager: ObservableObject {
         let messageType = bytes[4]
         let body = Array(bytes[6..<(bytes.count - 1)])
         
-        switch messageType {
-        case 0x01: // Full frame
+        if messageType == 0x01 { // Full frame only
             do {
-                let (unpacked, _) = try unpack7to8RLE(body, maxBytes: body.count)
-                // Allow for slightly smaller frames due to compression
-                guard unpacked.count >= 700 else {
-                    print("Invalid full frame size: \(unpacked.count)")
-                    fullFrameInitialized = false
+                let (unpacked, _) = try unpack7to8RLE(body, maxBytes: expectedFrameSize)
+                guard unpacked.count == expectedFrameSize else {
+                    print("Invalid frame size: \(unpacked.count)")
                     return
                 }
                 
-                // Ensure we have a full frame's worth of data
-                let frameData = Array(unpacked.prefix(768))
-                if frameData.count < 768 {
-                    var paddedFrame = frameData
-                    paddedFrame.append(contentsOf: repeatElement(0, count: 768 - frameData.count))
-                    DispatchQueue.main.async {
-                        self.frameBuffer = paddedFrame
-                        self.fullFrameInitialized = true
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.frameBuffer = frameData
-                        self.fullFrameInitialized = true
-                    }
-                }
-            } catch {
-                print("Full frame decode failed: \(error)")
-                fullFrameInitialized = false
-            }
-            
-        case 0x02: // Delta frame
-            guard fullFrameInitialized else { return }
-            
-            do {
-                var buffer = frameBuffer
-                try applyDeltaRLE(body, to: &buffer)
                 DispatchQueue.main.async {
-                    self.frameBuffer = buffer
+                    self.frameBuffer = unpacked
                 }
             } catch {
-                // On delta error, request a full frame
-                sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
+                print("Frame decode error: \(error)")
             }
-            
-        default:
-            break
         }
     }
     
     func disconnect() {
         updateTimer?.invalidate()
         updateTimer = nil
-        
-        fullFrameTimer?.invalidate()
-        fullFrameTimer = nil
         
         if inputPort != 0 {
             MIDIPortDispose(inputPort)

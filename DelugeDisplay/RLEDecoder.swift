@@ -4,7 +4,7 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
     var dst = [UInt8]()
     var s = 0
     let end = min(src.count, maxBytes)
-    dst.reserveCapacity(end * 2) // Pre-allocate space for efficiency
+    dst.reserveCapacity(end * 2)
     
     while s < end {
         guard s < src.count else { break }
@@ -19,9 +19,19 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             else if first < 12 { size = 3; off = 4 }
             else if first < 28 { size = 4; off = 12 }
             else if first < 60 { size = 5; off = 28 }
-            else { continue } // Skip invalid marker
+            else { continue }
             
-            if s + size > src.count { break }
+            // Validate size bounds
+            if s + size > src.count {
+                print("Dense packet truncated")
+                break
+            }
+            
+            // Validate destination capacity
+            if dst.count + size > maxBytes {
+                print("Dense packet would exceed maxBytes")
+                break
+            }
             
             let highBits = first - UInt8(off)
             for j in 0..<size {
@@ -52,9 +62,18 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             }
             s += 1
             
-            // Limit maximum run length for safety
+            // Validate run length
             runLen = min(runLen, 256)
-            dst.append(contentsOf: repeatElement(byte, count: runLen))
+            
+            // Validate destination capacity
+            if dst.count + runLen > maxBytes {
+                print("RLE packet would exceed maxBytes")
+                runLen = maxBytes - dst.count
+            }
+            
+            if runLen > 0 {
+                dst.append(contentsOf: repeatElement(byte, count: runLen))
+            }
         }
     }
     
@@ -62,30 +81,41 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
 }
 
 func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
-    let frameSize = 128 * 6 // Fixed frame size for Deluge display
+    let frameSize = buffer.count
     var s = 0
     
     while s + 2 <= delta.count {
-        let offset = Int(delta[s]) | (Int(delta[s + 1]) << 7)
+        // Extract 14-bit offset value (7 bits from each byte)
+        let lowByte = delta[s] & 0x7F
+        let highByte = delta[s + 1] & 0x7F
+        let offset = Int(lowByte) | (Int(highByte) << 7)
         s += 2
         
-        // Validate offset
-        guard offset < frameSize else { continue }
+        // Strict offset validation
+        if offset >= frameSize {
+            print("Invalid delta offset: \(offset), max: \(frameSize)")
+            // Skip this update but continue processing
+            // Find next potential valid marker
+            while s < delta.count && (delta[s] & 0x80) == 0 {
+                s += 1
+            }
+            continue
+        }
         
         let remaining = Array(delta[s...])
-        guard !remaining.isEmpty else { break }
+        if remaining.isEmpty { break }
         
         do {
-            let (unpacked, used) = try unpack7to8RLE(remaining, maxBytes: frameSize - offset)
-            guard !unpacked.isEmpty else { continue }
-            
-            // Ensure we don't write past buffer bounds
-            let updateLength = min(unpacked.count, frameSize - offset)
-            buffer.replaceSubrange(offset..<(offset + updateLength), with: unpacked.prefix(updateLength))
-            
+            let (unpacked, used) = try unpack7to8RLE(remaining, maxBytes: min(128, frameSize - offset))
+            if !unpacked.isEmpty {
+                // Double check bounds before applying
+                let updateLength = min(unpacked.count, frameSize - offset)
+                buffer.replaceSubrange(offset..<(offset + updateLength), with: unpacked.prefix(updateLength))
+            }
             s += used
         } catch {
             // Skip to next potential update on error
+            print("Delta decode error at offset \(offset)")
             s += 1
             continue
         }
