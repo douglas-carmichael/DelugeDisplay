@@ -13,5 +13,7 @@ struct DelugeDisplayApp: App {
         WindowGroup {
             ContentView()
         }
+        .windowResizability(.contentSize)
+        .commandsRemoved()
     }
 }
