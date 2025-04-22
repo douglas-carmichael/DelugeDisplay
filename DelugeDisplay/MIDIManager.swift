@@ -13,23 +13,24 @@ class MIDIManager: ObservableObject {
     private var sysExBuffer: [UInt8] = []
     private var fullFrameInitialized = false
     private var updateTimer: Timer?
+    private var fullFrameTimer: Timer?
+    private var deltaFailCount = 0
+    private let maxDeltaFails = 3
     
     private let delugePortName = "Port 3"
-    private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7] // Changed to request delta updates
+    private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7] // Changed to always request full frames
     
     deinit {
         disconnect()
     }
     
     func setupMIDI() {
-        // Create MIDI client
         var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { _ in }
         guard status == noErr else {
             print("Failed to create MIDI client")
             return
         }
         
-        // Create input port
         status = MIDIInputPortCreateWithBlock(client, "Input" as CFString, &inputPort) { [weak self] packetList, _ in
             self?.handleMIDIPacketList(packetList.pointee)
         }
@@ -38,7 +39,6 @@ class MIDIManager: ObservableObject {
             return
         }
         
-        // Create output port
         status = MIDIOutputPortCreate(client, "Output" as CFString, &outputPort)
         guard status == noErr else {
             print("Failed to create output port")
@@ -75,20 +75,33 @@ class MIDIManager: ObservableObject {
         
         MIDIPortConnectSource(inputPort, input, nil)
         
-        // Request initial full frame
-        sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
-        
-        // Start update timer
         startUpdateTimer()
+        startFullFrameTimer()
         
         isConnected = true
     }
     
     private func startUpdateTimer() {
         updateTimer?.invalidate()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.sendOLEDRequest()
         }
+    }
+    
+    private func startFullFrameTimer() {
+        fullFrameTimer?.invalidate()
+        fullFrameTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.requestFullFrame()
+        }
+    }
+    
+    private func requestFullFrame() {
+        sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
+        fullFrameInitialized = false
+    }
+    
+    private func sendOLEDRequest() {
+        sendSysEx(oledRequestSysex)
     }
     
     private func sendSysEx(_ data: [UInt8]) {
@@ -98,10 +111,6 @@ class MIDIManager: ObservableObject {
         let packet = MIDIPacketListInit(&packetList)
         _ = MIDIPacketListAdd(&packetList, 1024, packet, 0, data.count, data)
         MIDISend(outputPort, output, &packetList)
-    }
-    
-    private func sendOLEDRequest() {
-        sendSysEx(oledRequestSysex)
     }
     
     private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
@@ -133,26 +142,42 @@ class MIDIManager: ObservableObject {
         guard bytes[0] == 0xf0, bytes[1] == 0x7d, bytes[2] == 0x02, bytes[3] == 0x40 else { return }
         
         let messageType = bytes[4]
-        let body = Array(bytes[6..<bytes.count - 1])
+        let body = Array(bytes[6..<(bytes.count - 1)])
         
         switch messageType {
         case 0x01: // Full frame
             do {
                 let (unpacked, _) = try unpack7to8RLE(body, maxBytes: body.count)
-                guard unpacked.count == 768 else {
+                // Allow for slightly smaller frames due to compression
+                guard unpacked.count >= 700 else {
                     print("Invalid full frame size: \(unpacked.count)")
+                    fullFrameInitialized = false
                     return
                 }
-                DispatchQueue.main.async {
-                    self.frameBuffer = unpacked
-                    self.fullFrameInitialized = true
+                
+                // Ensure we have a full frame's worth of data
+                let frameData = Array(unpacked.prefix(768))
+                if frameData.count < 768 {
+                    var paddedFrame = frameData
+                    paddedFrame.append(contentsOf: repeatElement(0, count: 768 - frameData.count))
+                    DispatchQueue.main.async {
+                        self.frameBuffer = paddedFrame
+                        self.fullFrameInitialized = true
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.frameBuffer = frameData
+                        self.fullFrameInitialized = true
+                    }
                 }
             } catch {
                 print("Full frame decode failed: \(error)")
+                fullFrameInitialized = false
             }
             
         case 0x02: // Delta frame
             guard fullFrameInitialized else { return }
+            
             do {
                 var buffer = frameBuffer
                 try applyDeltaRLE(body, to: &buffer)
@@ -160,7 +185,7 @@ class MIDIManager: ObservableObject {
                     self.frameBuffer = buffer
                 }
             } catch {
-                // Request a full frame refresh if delta update fails
+                // On delta error, request a full frame
                 sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
             }
             
@@ -172,6 +197,9 @@ class MIDIManager: ObservableObject {
     func disconnect() {
         updateTimer?.invalidate()
         updateTimer = nil
+        
+        fullFrameTimer?.invalidate()
+        fullFrameTimer = nil
         
         if inputPort != 0 {
             MIDIPortDispose(inputPort)
