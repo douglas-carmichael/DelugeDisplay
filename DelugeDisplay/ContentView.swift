@@ -19,19 +19,9 @@ struct ContentView: View {
             } else {
                 Text("Waiting for Deluge connection...")
             }
-            
-            HStack {
-                Button("Connect") {
-                    midiManager.setupMIDI()
-                }
-                .disabled(midiManager.isConnected)
-                
-                Button("Disconnect") {
-                    midiManager.disconnect()
-                }
-                .disabled(!midiManager.isConnected)
-            }
-            .padding()
+        }
+        .onAppear {
+            midiManager.setupMIDI()
         }
     }
 }
