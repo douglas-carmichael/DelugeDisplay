@@ -69,10 +69,10 @@ class MIDIManager: ObservableObject {
             return
         }
         
-        connectToDeluge()
+        connectToDeluge(delugePortName: "Port 3")
     }
     
-    private func connectToDeluge() {
+    private func connectToDeluge(delugePortName:String) {
         for i in 0..<MIDIGetNumberOfDestinations() {
             let endpoint = MIDIGetDestination(i)
             var name: Unmanaged<CFString>?
@@ -92,7 +92,7 @@ class MIDIManager: ObservableObject {
         }
         
         guard let input = delugeInput, let output = delugeOutput else {
-            print("Could not find Deluge Port 3")
+            print("Could not find specified port")
             return
         }
         
