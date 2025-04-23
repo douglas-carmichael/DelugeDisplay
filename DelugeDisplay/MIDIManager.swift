@@ -91,7 +91,7 @@ class MIDIManager: ObservableObject {
             }
         }
         
-        guard let input = delugeInput, let output = delugeOutput else {
+        guard let input = delugeInput, let _ = delugeOutput else {  
             print("Could not find specified port")
             return
         }
