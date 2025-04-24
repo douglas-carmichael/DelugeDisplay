@@ -8,6 +8,7 @@ struct DelugeScreenView: View {
     private let screenWidth = 128
     private let screenHeight = 48
     private let blocksHigh = 6
+    private let minimumScale: CGFloat = 2.0
     
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
@@ -63,10 +64,13 @@ struct DelugeScreenView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            let scale = floor(min(
-                geometry.size.width / CGFloat(screenWidth),
-                geometry.size.height / CGFloat(screenHeight)
-            ))
+            let scale = max(
+                minimumScale,
+                floor(min(
+                    geometry.size.width / CGFloat(screenWidth),
+                    geometry.size.height / CGFloat(screenHeight)
+                ))
+            )
             
             Canvas { context, size in
                 context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
@@ -93,5 +97,7 @@ struct DelugeScreenView: View {
             .background(Color.black)
         }
         .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
+        .frame(minWidth: CGFloat(screenWidth) * minimumScale,
+               minHeight: CGFloat(screenHeight) * minimumScale)
     }
 }
