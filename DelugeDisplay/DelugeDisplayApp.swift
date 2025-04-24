@@ -9,17 +9,19 @@ import SwiftUI
 
 @main
 struct DelugeDisplayApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var displayMode: DelugeDisplayMode = .oled
 
-    init()
-    {
+    init() {
         NSWindow.allowsAutomaticWindowTabbing = false
     }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 512, height: 192)
         .commandsRemoved()
         .commands {
             // Replace all standard menus with empty ones
