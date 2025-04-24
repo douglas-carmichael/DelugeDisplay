@@ -7,11 +7,6 @@
 
 import SwiftUI
 
-enum DisplayMode {
-    case oled
-    case sevenSeg
-}
-
 @main
 struct DelugeDisplayApp: App {
     @State private var displayMode: DelugeDisplayMode = .oled
