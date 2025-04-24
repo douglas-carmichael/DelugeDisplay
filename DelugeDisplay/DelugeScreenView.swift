@@ -62,20 +62,36 @@ struct DelugeScreenView: View {
     }
     
     var body: some View {
-        Canvas { context, size in
-            // Clear background
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+        GeometryReader { geometry in
+            let scale = floor(min(
+                geometry.size.width / CGFloat(screenWidth),
+                geometry.size.height / CGFloat(screenHeight)
+            ))
             
-            // Validate frame data
-            guard frameBuffer.count == screenWidth * blocksHigh else { return }
-            
-            if let image = createImage(width: screenWidth, height: screenHeight) {
-                let resolvedImage = Image(image, scale: 1.0, label: Text(""))
-                    .interpolation(smoothingEnabled ? smoothingQuality : .none)
-                context.draw(resolvedImage, in: CGRect(origin: .zero, size: size))
+            Canvas { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+                
+                guard frameBuffer.count == screenWidth * blocksHigh else { return }
+                
+                if let image = createImage(width: screenWidth, height: screenHeight) {
+                    let resolvedImage = Image(image, scale: 1.0, label: Text(""))
+                        .interpolation(smoothingEnabled ? smoothingQuality : .none)
+                    
+                    let scaledWidth = CGFloat(screenWidth) * scale
+                    let scaledHeight = CGFloat(screenHeight) * scale
+                    let x = (size.width - scaledWidth) / 2
+                    let y = (size.height - scaledHeight) / 2
+                    
+                    context.draw(resolvedImage, in: CGRect(
+                        x: x,
+                        y: y,
+                        width: scaledWidth,
+                        height: scaledHeight
+                    ))
+                }
             }
+            .background(Color.black)
         }
-        .background(Color.black)
         .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
     }
 }
