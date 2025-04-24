@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 
 struct DelugeScreenView: View {
     let frameBuffer: [UInt8]
@@ -9,6 +10,8 @@ struct DelugeScreenView: View {
     private let screenHeight = 48
     private let blocksHigh = 6
     private let minimumScale: CGFloat = 2.0
+    
+    private let logger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView")
     
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
@@ -23,32 +26,38 @@ struct DelugeScreenView: View {
     private func createImage(width: Int, height: Int) -> CGImage? {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
-        let context = CGContext(data: nil,
+        guard let context = CGContext(data: nil,
                               width: width,
                               height: height,
                               bitsPerComponent: 8,
                               bytesPerRow: width * 4,
                               space: colorSpace,
-                              bitmapInfo: bitmapInfo.rawValue)
+                              bitmapInfo: bitmapInfo.rawValue) else {
+            logger.error("Failed to create CGContext")
+            return nil
+        }
         
-        context?.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1.0))
-        context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1.0))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         
-        context?.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
         
         for blk in 0..<blocksHigh {
             for row in 0..<8 {
                 let mask = UInt8(1 << row)
                 for col in 0..<screenWidth {
                     let byteIndex = blk * screenWidth + col
-                    guard byteIndex < frameBuffer.count else { continue }
+                    guard byteIndex < frameBuffer.count else {
+                        logger.error("Frame buffer index out of bounds: \(byteIndex)")
+                        continue 
+                    }
                     
                     let byte = flipByte(frameBuffer[byteIndex])
                     let pixelOn = (byte & mask) != 0
                     
                     if pixelOn {
                         let y = height - (blk * 8 + (7 - row)) - 1
-                        context?.fill(CGRect(
+                        context.fill(CGRect(
                             x: col,
                             y: y,
                             width: 1,
@@ -59,7 +68,7 @@ struct DelugeScreenView: View {
             }
         }
         
-        return context?.makeImage()
+        return context.makeImage()
     }
     
     var body: some View {

@@ -1,6 +1,7 @@
 import Foundation
 import CoreMIDI
 import SwiftUI
+import OSLog
 
 class MIDIManager: ObservableObject {
     @Published var isConnected = false
@@ -56,6 +57,8 @@ class MIDIManager: ObservableObject {
     
     private var connectionTimer: Timer?
     
+    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
+    
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
         for i in 0..<8 {
@@ -87,7 +90,7 @@ class MIDIManager: ObservableObject {
     func setupMIDI() {
         var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { _ in }
         guard status == noErr else {
-            print("Failed to create MIDI client")
+            logger.error("Failed to create MIDI client: \(status)")
             return
         }
         
@@ -95,13 +98,13 @@ class MIDIManager: ObservableObject {
             self?.handleMIDIPacketList(packetList.pointee)
         }
         guard status == noErr else {
-            print("Failed to create input port")
+            logger.error("Failed to create input port: \(status)")
             return
         }
         
         status = MIDIOutputPortCreate(client, "Output" as CFString, &outputPort)
         guard status == noErr else {
-            print("Failed to create output port")
+            logger.error("Failed to create output port: \(status)")
             return
         }
         
@@ -127,7 +130,7 @@ class MIDIManager: ObservableObject {
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
             if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
                 delugeOutput = endpoint
-                print("Found Deluge output: \(n)")
+                logger.info("Found Deluge output: \(n)")
             }
         }
         
@@ -137,12 +140,12 @@ class MIDIManager: ObservableObject {
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
             if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
                 delugeInput = endpoint
-                print("Found Deluge input: \(n)")
+                logger.info("Found Deluge input: \(n)")
             }
         }
         
         guard let input = delugeInput, let _ = delugeOutput else {
-            print("Could not find Deluge ports")
+            logger.error("Could not find Deluge ports")
             isConnected = false
             return
         }
@@ -173,7 +176,7 @@ class MIDIManager: ObservableObject {
             guard let self = self else { return }
             
             guard newFrame.count == 128 * 6 else {
-                print("Invalid frame size in update: \(newFrame.count)")
+                logger.error("Invalid frame size in update: \(newFrame.count)")
                 return
             }
             
@@ -209,7 +212,7 @@ class MIDIManager: ObservableObject {
         let length = Int(packet.pointee.length)
         
         guard length > 0, length <= maxSysExSize else {
-            print("Invalid MIDI packet length: \(length)")
+            logger.error("Invalid MIDI packet length: \(length)")
             return
         }
         
@@ -219,7 +222,7 @@ class MIDIManager: ObservableObject {
         
         for byte in bytes {
             if sysExBuffer.count >= maxSysExSize {
-                print("SysEx buffer overflow, clearing")
+                logger.warning("SysEx buffer overflow, clearing")
                 sysExBuffer.removeAll()
                 return
             }
@@ -254,7 +257,7 @@ class MIDIManager: ObservableObject {
             do {
                 let (unpacked, _) = try unpack7to8RLE(body, maxBytes: expectedFrameSize)
                 guard unpacked.count == expectedFrameSize else {
-                    print("Invalid frame size: \(unpacked.count)")
+                    logger.error("Invalid frame size: \(unpacked.count)")
                     return
                 }
                 
@@ -262,7 +265,7 @@ class MIDIManager: ObservableObject {
                     self?.frameBuffer = unpacked
                 }
             } catch {
-                print("Frame decode error: \(error)")
+                logger.error("Frame decode error: \(error.localizedDescription)")
             }
         }
     }

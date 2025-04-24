@@ -1,14 +1,21 @@
 import Foundation
+import OSLog
 
-func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
+private let logger = Logger(subsystem: "com.delugedisplay", category: "RLEDecoder")
+
+enum RLEError: Error {
+    case truncatedData
+}
+
+func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
     var dst = [UInt8]()
     var s = 0
-    let end = min(src.count, maxBytes)
+    let end = min(data.count, maxBytes)
     dst.reserveCapacity(end * 2)
     
     while s < end {
-        guard s < src.count else { break }
-        let first = src[s]
+        guard s < data.count else { break }
+        let first = data[s]
         s += 1
         
         if first < 64 {
@@ -22,20 +29,20 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             else { continue }
             
             // Validate size bounds
-            if s + size > src.count {
-                print("Dense packet truncated")
-                break
+            if s + size > data.count {
+                logger.error("Dense packet truncated")
+                throw RLEError.truncatedData
             }
             
             // Validate destination capacity
             if dst.count + size > maxBytes {
-                print("Dense packet would exceed maxBytes")
+                logger.error("Dense packet would exceed maxBytes")
                 break
             }
             
             let highBits = first - UInt8(off)
             for j in 0..<size {
-                var byte = src[s + j] & 0x7F
+                var byte = data[s + j] & 0x7F
                 if (highBits & (1 << j)) != 0 {
                     byte |= 0x80
                 }
@@ -50,13 +57,13 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             var runLen = Int(marker >> 1)
             
             if runLen == 31 {
-                if s >= src.count { break }
-                runLen = 31 + Int(src[s])
+                if s >= data.count { break }
+                runLen = 31 + Int(data[s])
                 s += 1
             }
             
-            if s >= src.count { break }
-            var byte = src[s] & 0x7F
+            if s >= data.count { break }
+            var byte = data[s] & 0x7F
             if high {
                 byte |= 0x80
             }
@@ -67,7 +74,7 @@ func unpack7to8RLE(_ src: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             
             // Validate destination capacity
             if dst.count + runLen > maxBytes {
-                print("RLE packet would exceed maxBytes")
+                logger.error("RLE packet would exceed maxBytes")
                 runLen = maxBytes - dst.count
             }
             
@@ -93,7 +100,7 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
         
         // Strict offset validation
         if offset >= frameSize {
-            print("Invalid delta offset: \(offset), max: \(frameSize)")
+            logger.error("Invalid delta offset: \(offset), max: \(frameSize)")
             // Skip this update but continue processing
             // Find next potential valid marker
             while s < delta.count && (delta[s] & 0x80) == 0 {
@@ -115,7 +122,7 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
             s += used
         } catch {
             // Skip to next potential update on error
-            print("Delta decode error at offset \(offset)")
+            logger.error("Delta decode error at offset \(offset)")
             s += 1
             continue
         }
