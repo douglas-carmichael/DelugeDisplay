@@ -10,14 +10,22 @@ import CoreMIDI
 
 struct ContentView: View {
     @StateObject private var midiManager = MIDIManager()
+    @State private var viewSize: CGSize = CGSize(width: 512, height: 192)
     
     var body: some View {
-        VStack {
+        ZStack {
+            Color.black // Background that fills the entire window
+                .ignoresSafeArea()
+            
             if midiManager.isConnected {
-                DelugeScreenView(frameBuffer: midiManager.frameBuffer)
-                    .frame(width: 512, height: 192) // 4x scale
+                GeometryReader { geometry in
+                    DelugeScreenView(frameBuffer: midiManager.frameBuffer)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+                .aspectRatio(8/3, contentMode: .fit)
             } else {
                 Text("Waiting for Deluge connection...")
+                    .foregroundColor(.white)
             }
         }
         .onAppear {
