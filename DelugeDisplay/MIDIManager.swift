@@ -1,9 +1,29 @@
 import Foundation
 import CoreMIDI
+import SwiftUI
 
 class MIDIManager: ObservableObject {
     @Published var isConnected = false
     @Published var frameBuffer: [UInt8] = Array(repeating: 0, count: 128 * 6)
+    @Published var smoothingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(smoothingEnabled, forKey: "smoothingEnabled")
+        }
+    }
+    @Published var smoothingQuality: Image.Interpolation {
+        didSet {
+            // Store as integer
+            let value: Int
+            switch smoothingQuality {
+            case .none: value = 0
+            case .low: value = 1
+            case .medium: value = 2
+            case .high: value = 3
+            @unknown default: value = 2
+            }
+            UserDefaults.standard.set(value, forKey: "smoothingQuality")
+        }
+    }
     
     private let expectedFrameSize = 128 * 6
     private let frameTimeout: TimeInterval = 0.1
@@ -44,6 +64,20 @@ class MIDIManager: ObservableObject {
             }
         }
         return flipped
+    }
+    
+    init() {
+        // Load saved preferences or use defaults
+        self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
+        
+        // Convert stored integer back to Interpolation
+        let savedQuality = UserDefaults.standard.integer(forKey: "smoothingQuality")
+        self.smoothingQuality = switch savedQuality {
+            case 0: .none
+            case 1: .low
+            case 3: .high
+            default: .medium
+        }
     }
     
     deinit {

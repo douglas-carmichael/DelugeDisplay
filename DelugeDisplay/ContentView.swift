@@ -9,7 +9,7 @@ import SwiftUI
 import CoreMIDI
 
 struct ContentView: View {
-    @EnvironmentObject private var midiManager: MIDIManager
+    @EnvironmentObject var midiManager: MIDIManager
     @State private var viewSize: CGSize = CGSize(width: 512, height: 192)
     
     var body: some View {
@@ -19,8 +19,12 @@ struct ContentView: View {
             
             if midiManager.isConnected {
                 GeometryReader { geometry in
-                    DelugeScreenView(frameBuffer: midiManager.frameBuffer)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    DelugeScreenView(
+                        frameBuffer: midiManager.frameBuffer,
+                        smoothingEnabled: midiManager.smoothingEnabled,
+                        smoothingQuality: midiManager.smoothingQuality
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 }
                 .aspectRatio(8/3, contentMode: .fit)
             } else {

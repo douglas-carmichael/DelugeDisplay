@@ -2,6 +2,9 @@ import SwiftUI
 
 struct DelugeScreenView: View {
     let frameBuffer: [UInt8]
+    let smoothingEnabled: Bool
+    let smoothingQuality: Image.Interpolation
+    
     private let screenWidth = 128
     private let screenHeight = 48
     private let blocksHigh = 6
@@ -43,7 +46,6 @@ struct DelugeScreenView: View {
                     let pixelOn = (byte & mask) != 0
                     
                     if pixelOn {
-                        // Invert the y-coordinate
                         let y = height - (blk * 8 + (7 - row)) - 1
                         context?.fill(CGRect(
                             x: col,
@@ -69,7 +71,7 @@ struct DelugeScreenView: View {
             
             if let image = createImage(width: screenWidth, height: screenHeight) {
                 let resolvedImage = Image(image, scale: 1.0, label: Text(""))
-                    .interpolation(.medium)
+                    .interpolation(smoothingEnabled ? smoothingQuality : .none)
                 context.draw(resolvedImage, in: CGRect(origin: .zero, size: size))
             }
         }

@@ -35,14 +35,6 @@ struct DelugeDisplayApp: App {
                 
                 Divider()
                 
-                // Preferences group
-                Button("Preferences...") {
-                    // Preferences action
-                }
-                .keyboardShortcut(",", modifiers: .command)
-                
-                Divider()
-                
                 // Services group (empty but keeping divider for HIG compliance)
                 Divider()
                 
@@ -69,7 +61,7 @@ struct DelugeDisplayApp: App {
                 .keyboardShortcut("q", modifiers: .command)
             }
             
-            // Custom View menu only
+            // Custom View menu
             CommandGroup(replacing: .sidebar) {
                 Divider()
                 Toggle("Show OLED", isOn: Binding(
@@ -83,6 +75,19 @@ struct DelugeDisplayApp: App {
                     set: { if $0 { displayMode = .sevenSegment } }
                 ))
                     .keyboardShortcut("2", modifiers: .command)
+                
+                Divider()
+                
+                Toggle("Enable Smoothing", isOn: $midiManager.smoothingEnabled)
+                    .keyboardShortcut("s", modifiers: .command)
+                
+                Picker("Smoothing Quality", selection: $midiManager.smoothingQuality) {
+                        Text("Low").tag(Image.Interpolation.low)
+                        Text("Medium").tag(Image.Interpolation.medium)
+                        Text("High").tag(Image.Interpolation.high)
+                    }
+                
+                .disabled(!midiManager.smoothingEnabled)
             }
         }
     }
