@@ -9,7 +9,7 @@ import SwiftUI
 import CoreMIDI
 
 struct ContentView: View {
-    @StateObject private var midiManager = MIDIManager()
+    @EnvironmentObject private var midiManager: MIDIManager
     @State private var viewSize: CGSize = CGSize(width: 512, height: 192)
     
     var body: some View {

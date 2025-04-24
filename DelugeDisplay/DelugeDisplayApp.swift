@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct DelugeDisplayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var midiManager = MIDIManager()
     @State private var displayMode: DelugeDisplayMode = .oled
 
     init() {
@@ -19,6 +20,7 @@ struct DelugeDisplayApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(midiManager)
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 512, height: 192)

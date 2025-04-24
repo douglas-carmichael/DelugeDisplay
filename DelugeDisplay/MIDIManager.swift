@@ -34,6 +34,8 @@ class MIDIManager: ObservableObject {
     
     private let maxSysExSize = 1024 * 16 // 16KB should be plenty for OLED frames
     
+    private var connectionTimer: Timer?
+    
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
         for i in 0..<8 {
@@ -69,16 +71,29 @@ class MIDIManager: ObservableObject {
             return
         }
         
-        connectToDeluge(delugePortName: "Port 3")
+        startConnectionTimer()
+    }
+    
+    private func startConnectionTimer() {
+        connectionTimer?.invalidate()
+        connectionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            if !(self?.isConnected ?? false) {
+                self?.connectToDeluge(delugePortName: "Port 3")
+            }
+        }
     }
     
     private func connectToDeluge(delugePortName:String) {
+        delugeInput = nil
+        delugeOutput = nil
+        
         for i in 0..<MIDIGetNumberOfDestinations() {
             let endpoint = MIDIGetDestination(i)
             var name: Unmanaged<CFString>?
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
             if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
                 delugeOutput = endpoint
+                print("Found Deluge output: \(n)")
             }
         }
         
@@ -88,19 +103,22 @@ class MIDIManager: ObservableObject {
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
             if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
                 delugeInput = endpoint
+                print("Found Deluge input: \(n)")
             }
         }
         
-        guard let input = delugeInput, let _ = delugeOutput else {  
-            print("Could not find specified port")
+        guard let input = delugeInput, let _ = delugeOutput else {
+            print("Could not find Deluge ports")
+            isConnected = false
             return
         }
         
         MIDIPortConnectSource(inputPort, input, nil)
-        
         startUpdateTimer()
         
-        isConnected = true
+        DispatchQueue.main.async {
+            self.isConnected = true
+        }
     }
     
     private func startUpdateTimer() {
@@ -120,7 +138,6 @@ class MIDIManager: ObservableObject {
         frameQueue.async { [weak self] in
             guard let self = self else { return }
             
-            // Validate frame size
             guard newFrame.count == 128 * 6 else {
                 print("Invalid frame size in update: \(newFrame.count)")
                 return
@@ -157,13 +174,11 @@ class MIDIManager: ObservableObject {
     private func handleMIDIPacket(_ packet: UnsafePointer<MIDIPacket>) {
         let length = Int(packet.pointee.length)
         
-        // Safety check for packet length
         guard length > 0, length <= maxSysExSize else {
             print("Invalid MIDI packet length: \(length)")
             return
         }
         
-        // Use withUnsafeBytes for safe memory access
         let bytes = withUnsafeBytes(of: packet.pointee.data) { buffer in
             Array(buffer.prefix(length))
         }
@@ -183,7 +198,6 @@ class MIDIManager: ObservableObject {
     }
     
     private func processSysEx(_ bytes: [UInt8]) {
-        // Additional safety checks
         guard bytes.count >= 7,
               bytes.count <= maxSysExSize,
               bytes[0] == 0xf0,
@@ -195,7 +209,6 @@ class MIDIManager: ObservableObject {
         
         let messageType = bytes[4]
         
-        // Safety check for body extraction
         guard bytes.count >= 7,
               bytes.last == 0xf7 else {
             return
@@ -203,7 +216,7 @@ class MIDIManager: ObservableObject {
         
         let body = Array(bytes[6...(bytes.count - 2)])
         
-        if messageType == 0x01 { // Full frame only
+        if messageType == 0x01 {
             do {
                 let (unpacked, _) = try unpack7to8RLE(body, maxBytes: expectedFrameSize)
                 guard unpacked.count == expectedFrameSize else {
@@ -221,6 +234,8 @@ class MIDIManager: ObservableObject {
     }
     
     func disconnect() {
+        connectionTimer?.invalidate()
+        connectionTimer = nil
         updateTimer?.invalidate()
         updateTimer = nil
         
