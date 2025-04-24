@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @ObservedObject var midiManager = MIDIManager()
     let minWidth: CGFloat = 512  // 128 * 4 in points
     let minHeight: CGFloat = 192  // 48 * 4 in points
+    var aboutWindow: NSWindow?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let window = NSApplication.shared.windows.first {
@@ -76,5 +77,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     
     func applicationWillTerminate(_ notification: Notification) {
         midiManager.disconnect()
+    }
+    
+    func showAboutWindow() {
+        if aboutWindow == nil {
+            let aboutView = AboutView()
+            let hostingController = NSHostingController(rootView: aboutView)
+            
+            aboutWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 400),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            
+            aboutWindow?.contentViewController = hostingController
+            aboutWindow?.title = "About DelugeDisplay"
+            aboutWindow?.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            aboutWindow?.standardWindowButton(.zoomButton)?.isHidden = true
+            aboutWindow?.center()
+            aboutWindow?.isReleasedWhenClosed = false
+            aboutWindow?.backgroundColor = .windowBackgroundColor
+        }
+        
+        aboutWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

@@ -26,11 +26,9 @@ struct DelugeDisplayApp: App {
         .defaultSize(width: 512, height: 192)
         .commandsRemoved()
         .commands {
-            // Replace all standard menus with empty ones
             CommandGroup(replacing: .appInfo) {
-                // About group
                 Button("About DelugeDisplay") {
-                    // About action
+                    appDelegate.showAboutWindow()
                 }
                 
                 Divider()

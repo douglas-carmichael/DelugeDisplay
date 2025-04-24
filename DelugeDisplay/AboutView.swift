@@ -11,19 +11,24 @@ struct AboutView: View {
                 .frame(width: 128, height: 128)
             
             Text("DelugeDisplay")
-                .font(.title)
+                .font(.system(size: 13, weight: .semibold))
             
             Text("Version \(appVersion) (\(buildNumber))")
-                .font(.caption)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
             
             Text("A companion display app for the Synthstrom Deluge")
+                .font(.system(size: 11))
                 .multilineTextAlignment(.center)
+                .foregroundColor(.primary)
             
             Text("© 2025 Douglas Carmichael")
-                .font(.caption)
-                .padding(.top)
+                .font(.system(size: 11))
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .padding(.top, 8)
         }
-        .frame(width: 320)
+        .frame(width: 400)
         .padding(20)
     }
 }
