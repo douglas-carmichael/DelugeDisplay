@@ -16,41 +16,61 @@ struct DelugeScreenView: View {
         return flipped
     }
     
+    private func createImage(width: Int, height: Int) -> CGImage? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+        let context = CGContext(data: nil,
+                              width: width,
+                              height: height,
+                              bitsPerComponent: 8,
+                              bytesPerRow: width * 4,
+                              space: colorSpace,
+                              bitmapInfo: bitmapInfo.rawValue)
+        
+        context?.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1.0))
+        context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        
+        context?.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+        
+        for blk in 0..<blocksHigh {
+            for row in 0..<8 {
+                let mask = UInt8(1 << row)
+                for col in 0..<screenWidth {
+                    let byteIndex = blk * screenWidth + col
+                    guard byteIndex < frameBuffer.count else { continue }
+                    
+                    let byte = flipByte(frameBuffer[byteIndex])
+                    let pixelOn = (byte & mask) != 0
+                    
+                    if pixelOn {
+                        // Invert the y-coordinate
+                        let y = height - (blk * 8 + (7 - row)) - 1
+                        context?.fill(CGRect(
+                            x: col,
+                            y: y,
+                            width: 1,
+                            height: 1
+                        ))
+                    }
+                }
+            }
+        }
+        
+        return context?.makeImage()
+    }
+    
     var body: some View {
         Canvas { context, size in
-            let pixelWidth = size.width / CGFloat(screenWidth)
-            let pixelHeight = size.height / CGFloat(screenHeight)
-            
             // Clear background
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
             
             // Validate frame data
             guard frameBuffer.count == screenWidth * blocksHigh else { return }
             
-            // Process blocks in normal order (top to bottom)
-            for blk in 0..<blocksHigh {
-                for row in 0..<8 {
-                    let mask = UInt8(1 << row)
-                    for col in 0..<screenWidth {
-                        // Calculate byte index
-                        let byteIndex = blk * screenWidth + col
-                        guard byteIndex < frameBuffer.count else { continue }
-                        
-                        // Flip bits in each byte
-                        let byte = flipByte(frameBuffer[byteIndex])
-                        let pixelOn = (byte & mask) != 0
-                        
-                        if pixelOn {
-                            let rect = CGRect(
-                                x: CGFloat(col) * pixelWidth,
-                                y: CGFloat(blk * 8 + (7 - row)) * pixelHeight,
-                                width: pixelWidth,
-                                height: pixelHeight
-                            )
-                            context.fill(Path(rect), with: .color(.white))
-                        }
-                    }
-                }
+            if let image = createImage(width: screenWidth, height: screenHeight) {
+                let resolvedImage = Image(image, scale: 1.0, label: Text(""))
+                    .interpolation(.medium)
+                context.draw(resolvedImage, in: CGRect(origin: .zero, size: size))
             }
         }
         .background(Color.black)
