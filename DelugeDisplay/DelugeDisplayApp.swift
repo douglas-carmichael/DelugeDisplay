@@ -61,7 +61,6 @@ struct DelugeDisplayApp: App {
             
             // Custom View menu
             CommandGroup(replacing: .sidebar) {
-                Divider()
                 Toggle("Show OLED", isOn: Binding(
                     get: { displayMode == .oled },
                     set: { if $0 { displayMode = .oled } }
