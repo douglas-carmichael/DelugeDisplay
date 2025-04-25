@@ -42,9 +42,14 @@ struct DelugeDisplayApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(midiManager)
+                .frame(minWidth: 256, minHeight: 96)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 512, height: 440)
+        .defaultSize(width: 256, height: 96)
+        .windowStyle(.automatic)
+        .windowToolbarStyle(.unified)
+        .defaultPosition(.center)
         .commandsRemoved()
         .commands {
             CommandGroup(replacing: .appInfo) {

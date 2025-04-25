@@ -9,7 +9,7 @@ struct DelugeScreenView: View {
     private let screenWidth = 128
     private let screenHeight = 48
     private let blocksHigh = 6
-    private let minimumScale: CGFloat = 2.0
+    private let minimumScale: CGFloat = 3.5  // Increased scale
     
     private let logger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView")
     
@@ -49,7 +49,7 @@ struct DelugeScreenView: View {
                     let byteIndex = blk * screenWidth + col
                     guard byteIndex < frameBuffer.count else {
                         logger.error("Frame buffer index out of bounds: \(byteIndex)")
-                        continue 
+                        continue
                     }
                     
                     let byte = flipByte(frameBuffer[byteIndex])
@@ -73,40 +73,49 @@ struct DelugeScreenView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            let scale = max(
-                minimumScale,
-                floor(min(
-                    geometry.size.width / CGFloat(screenWidth),
-                    geometry.size.height / CGFloat(screenHeight)
-                ))
-            )
-            
             Canvas { context, size in
-                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
-                
                 guard frameBuffer.count == screenWidth * blocksHigh else { return }
                 
                 if let image = createImage(width: screenWidth, height: screenHeight) {
                     let resolvedImage = Image(image, scale: 1.0, label: Text(""))
                         .interpolation(smoothingEnabled ? smoothingQuality : .none)
                     
-                    let scaledWidth = CGFloat(screenWidth) * scale
-                    let scaledHeight = CGFloat(screenHeight) * scale
-                    let x = (size.width - scaledWidth) / 2
-                    let y = (size.height - scaledHeight) / 2
+                    // Fill the entire canvas with black first
+                    context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+                    
+                    // Calculate dimensions to maintain aspect ratio while filling available space
+                    let availableAspect = size.width / size.height
+                    let imageAspect = CGFloat(screenWidth) / CGFloat(screenHeight)
+                    
+                    let drawWidth: CGFloat
+                    let drawHeight: CGFloat
+                    
+                    if availableAspect > imageAspect {
+                        drawHeight = size.height
+                        drawWidth = drawHeight * imageAspect
+                    } else {
+                        drawWidth = size.width
+                        drawHeight = drawWidth / imageAspect
+                    }
+                    
+                    let x = (size.width - drawWidth) / 2
+                    let y = (size.height - drawHeight) / 2
                     
                     context.draw(resolvedImage, in: CGRect(
                         x: x,
                         y: y,
-                        width: scaledWidth,
-                        height: scaledHeight
+                        width: drawWidth,
+                        height: drawHeight
                     ))
                 }
             }
-            .background(Color.black)
         }
+        .frame(
+            idealWidth: CGFloat(screenWidth) * minimumScale,
+            idealHeight: CGFloat(screenHeight) * minimumScale
+        )
         .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
-        .frame(minWidth: CGFloat(screenWidth) * minimumScale,
-               minHeight: CGFloat(screenHeight) * minimumScale)
+        .background(Color.black)
+        .edgesIgnoringSafeArea(.all)
     }
 }

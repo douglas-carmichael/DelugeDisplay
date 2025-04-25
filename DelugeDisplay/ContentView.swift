@@ -23,12 +23,12 @@ struct ContentView: View {
                         smoothingEnabled: midiManager.smoothingEnabled,
                         smoothingQuality: midiManager.smoothingQuality
                     )
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .aspectRatio(128/48, contentMode: .fit)
-                .padding(.top, 40)
-                .padding(.bottom, 52)
-                .padding(.horizontal, 20)
+                .padding(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 256, minHeight: 96)
             } else {
                 Text("Waiting for Deluge connection...")
                     .foregroundColor(.white)
