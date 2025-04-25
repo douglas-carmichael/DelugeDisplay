@@ -25,6 +25,29 @@ class MIDIManager: ObservableObject {
             UserDefaults.standard.set(value, forKey: "smoothingQuality")
         }
     }
+    @Published var isWaitingForConnection = false
+    
+    struct MIDIPort: Identifiable {
+        let id: MIDIEndpointRef
+        let name: String
+    }
+    
+    @Published var availablePorts: [MIDIPort] = []
+    @Published var selectedPort: MIDIPort? {
+        didSet {
+            // Immediately handle port changes
+            if isConnected {
+                disconnect()
+            }
+            clearFrameBuffer()
+            if let port = selectedPort {
+                lastSelectedPortName = port.name
+                connectToDeluge(portName: port.name)
+            }
+        }
+    }
+    
+    private var lastSelectedPortName: String? // Track last selected port
     
     private let expectedFrameSize = 128 * 6
     private let frameTimeout: TimeInterval = 0.1
@@ -48,7 +71,6 @@ class MIDIManager: ObservableObject {
     private let numRows = 6
     
     private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
-    private let delugePortName = "Port 3"
     
     private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
     private var pendingFrame: [UInt8]?
@@ -58,6 +80,7 @@ class MIDIManager: ObservableObject {
     private var connectionTimer: Timer?
     
     private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
+    private let delugePortName = ""
     
     private func flipByte(_ byte: UInt8) -> UInt8 {
         var flipped: UInt8 = 0
@@ -67,6 +90,24 @@ class MIDIManager: ObservableObject {
             }
         }
         return flipped
+    }
+    
+    private func clearFrameBuffer() {
+        DispatchQueue.main.async {
+            self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+        }
+    }
+    
+    private func drawWaitingMessage() {
+        // This is a placeholder - we'll need to implement the actual text drawing
+        // For now, just setting the first few bytes to indicate activity
+        DispatchQueue.main.async {
+            var newBuffer = Array(repeating: UInt8(0), count: self.expectedFrameSize)
+            // Set some pixels in the first row to show activity
+            newBuffer[0] = 0xFF
+            newBuffer[1] = 0xFF
+            self.frameBuffer = newBuffer
+        }
     }
     
     init() {
@@ -87,8 +128,43 @@ class MIDIManager: ObservableObject {
         disconnect()
     }
     
+    private func scanAvailablePorts() {
+        var ports: [MIDIPort] = []
+        
+        for i in 0..<MIDIGetNumberOfDestinations() {
+            let endpoint = MIDIGetDestination(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
+            if let n = name?.takeUnretainedValue() as String? {
+                ports.append(MIDIPort(id: endpoint, name: n))
+                
+                // Only auto-select Port 3 if no port was previously selected
+                if n.contains(delugePortName) && selectedPort == nil && lastSelectedPortName == nil {
+                    DispatchQueue.main.async {
+                        self.selectedPort = MIDIPort(id: endpoint, name: n)
+                    }
+                }
+                
+                // If this is the last selected port, reselect it
+                if let lastPort = lastSelectedPortName, n == lastPort {
+                    DispatchQueue.main.async {
+                        self.selectedPort = MIDIPort(id: endpoint, name: n)
+                    }
+                }
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.availablePorts = ports
+        }
+    }
+    
     func setupMIDI() {
-        var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { _ in }
+        var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] _ in
+            // Only log significant MIDI system changes
+            self?.logger.info("MIDI system changed - rescanning ports")
+            self?.scanAvailablePorts()
+        }
         guard status == noErr else {
             logger.error("Failed to create MIDI client: \(status)")
             return
@@ -108,54 +184,112 @@ class MIDIManager: ObservableObject {
             return
         }
         
+        scanAvailablePorts()
         startConnectionTimer()
+    }
+    
+    private func connectToDeluge(portName: String) {
+        lastSelectedPortName = portName
+        
+        guard client != 0, inputPort != 0, outputPort != 0 else {
+            setupMIDI()
+            return
+        }
+        
+        delugeInput = nil
+        delugeOutput = nil
+        isConnected = false
+        clearFrameBuffer()
+        
+        // Find matching input/output pair
+        var foundOutput: MIDIEndpointRef?
+        var foundInput: MIDIEndpointRef?
+        
+        // First find output
+        for i in 0..<MIDIGetNumberOfDestinations() {
+            let endpoint = MIDIGetDestination(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
+            if let n = name?.takeUnretainedValue() as String?, n == portName {
+                foundOutput = endpoint
+                break
+            }
+        }
+        
+        // Then find input
+        for i in 0..<MIDIGetNumberOfSources() {
+            let endpoint = MIDIGetSource(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
+            if let n = name?.takeUnretainedValue() as String?, n == portName {
+                foundInput = endpoint
+                break
+            }
+        }
+        
+        // Only proceed if we found both
+        if let input = foundInput, let output = foundOutput {
+            delugeInput = input
+            delugeOutput = output
+            
+            MIDIPortConnectSource(inputPort, input, nil)
+            startUpdateTimer()
+        } else {
+            isConnected = false
+            return
+        }
     }
     
     private func startConnectionTimer() {
         connectionTimer?.invalidate()
         connectionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            if !(self?.isConnected ?? false) {
-                self?.connectToDeluge(delugePortName: "Port 3")
+            guard let self = self,
+                  !self.isConnected,
+                  let port = self.selectedPort,
+                  port.name == self.lastSelectedPortName else { return }
+            
+            // Don't retry if ports aren't found
+            if self.delugeInput == nil || self.delugeOutput == nil {
+                return
             }
+            
+            self.connectToDeluge(portName: port.name)
         }
     }
     
-    private func connectToDeluge(delugePortName:String) {
+    func disconnect() {
+        // Only log disconnects from active Deluge connections
+        if isConnected {
+            logger.info("Disconnected from Deluge on port: \(self.lastSelectedPortName ?? "unknown")")
+        }
+        
+        connectionTimer?.invalidate()
+        connectionTimer = nil
+        updateTimer?.invalidate()
+        updateTimer = nil
+        
+        if let input = delugeInput {
+            MIDIPortDisconnectSource(inputPort, input)
+        }
+        
+        if inputPort != 0 {
+            MIDIPortDispose(inputPort)
+            inputPort = 0
+        }
+        if outputPort != 0 {
+            MIDIPortDispose(outputPort)
+            outputPort = 0
+        }
+        if client != 0 {
+            MIDIClientDispose(client)
+            client = 0
+        }
+        
         delugeInput = nil
         delugeOutput = nil
-        
-        for i in 0..<MIDIGetNumberOfDestinations() {
-            let endpoint = MIDIGetDestination(i)
-            var name: Unmanaged<CFString>?
-            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
-            if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
-                delugeOutput = endpoint
-                logger.info("Found Deluge output: \(n)")
-            }
-        }
-        
-        for i in 0..<MIDIGetNumberOfSources() {
-            let endpoint = MIDIGetSource(i)
-            var name: Unmanaged<CFString>?
-            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
-            if let n = name?.takeUnretainedValue() as String?, n.contains(delugePortName) {
-                delugeInput = endpoint
-                logger.info("Found Deluge input: \(n)")
-            }
-        }
-        
-        guard let input = delugeInput, let _ = delugeOutput else {
-            logger.error("Could not find Deluge ports")
-            isConnected = false
-            return
-        }
-        
-        MIDIPortConnectSource(inputPort, input, nil)
-        startUpdateTimer()
-        
-        DispatchQueue.main.async {
-            self.isConnected = true
-        }
+        isConnected = false
+        fullFrameInitialized = false
+        clearFrameBuffer()
     }
     
     private func startUpdateTimer() {
@@ -262,33 +396,17 @@ class MIDIManager: ObservableObject {
                 }
                 
                 DispatchQueue.main.async { [weak self] in
-                    self?.frameBuffer = unpacked
+                    guard let self = self else { return }
+                    if !self.isConnected {
+                        // Only log when we first start receiving valid OLED data
+                        self.logger.info("Connected to Deluge on port: \(self.lastSelectedPortName ?? "unknown")")
+                    }
+                    self.isConnected = true
+                    self.frameBuffer = unpacked
                 }
             } catch {
                 logger.error("Frame decode error: \(error.localizedDescription)")
             }
         }
-    }
-    
-    func disconnect() {
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        updateTimer?.invalidate()
-        updateTimer = nil
-        
-        if inputPort != 0 {
-            MIDIPortDispose(inputPort)
-            inputPort = 0
-        }
-        if outputPort != 0 {
-            MIDIPortDispose(outputPort)
-            outputPort = 0
-        }
-        if client != 0 {
-            MIDIClientDispose(client)
-            client = 0
-        }
-        isConnected = false
-        fullFrameInitialized = false
     }
 }

@@ -17,6 +17,27 @@ struct DelugeDisplayApp: App {
         NSWindow.allowsAutomaticWindowTabbing = false
     }
     
+    private var midiPortItems: some View {
+        Group {
+            if midiManager.availablePorts.isEmpty {
+                Text("No MIDI Ports Available")
+            } else {
+                ForEach(midiManager.availablePorts) { port in
+                    Toggle(port.name, isOn: Binding(
+                        get: { midiManager.selectedPort?.id == port.id },
+                        set: { if $0 { midiManager.selectedPort = port } }
+                    ))
+                }
+            }
+            
+            Divider()
+            
+            Button("Rescan MIDI Ports") {
+                midiManager.setupMIDI()
+            }
+        }
+    }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -79,12 +100,16 @@ struct DelugeDisplayApp: App {
                     .keyboardShortcut("s", modifiers: .command)
                 
                 Picker("Smoothing Quality", selection: $midiManager.smoothingQuality) {
-                        Text("Low").tag(Image.Interpolation.low)
-                        Text("Medium").tag(Image.Interpolation.medium)
-                        Text("High").tag(Image.Interpolation.high)
-                    }
-                
+                    Text("Low").tag(Image.Interpolation.low)
+                    Text("Medium").tag(Image.Interpolation.medium)
+                    Text("High").tag(Image.Interpolation.high)
+                }
                 .disabled(!midiManager.smoothingEnabled)
+            }
+            
+            // Add MIDI menu
+            CommandMenu("MIDI") {
+                midiPortItems
             }
         }
     }
