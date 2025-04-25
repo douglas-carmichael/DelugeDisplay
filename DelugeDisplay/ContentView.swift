@@ -10,11 +10,10 @@ import CoreMIDI
 
 struct ContentView: View {
     @EnvironmentObject var midiManager: MIDIManager
-    @State private var viewSize: CGSize = CGSize(width: 512, height: 192)
     
     var body: some View {
         ZStack {
-            Color.black // Background that fills the entire window
+            Color.black
                 .ignoresSafeArea()
             
             if midiManager.isConnected {
@@ -26,7 +25,10 @@ struct ContentView: View {
                     )
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 }
-                .aspectRatio(8/3, contentMode: .fit)
+                .aspectRatio(128/48, contentMode: .fit)
+                .padding(.top, 40)
+                .padding(.bottom, 52)
+                .padding(.horizontal, 20)
             } else {
                 Text("Waiting for Deluge connection...")
                     .foregroundColor(.white)

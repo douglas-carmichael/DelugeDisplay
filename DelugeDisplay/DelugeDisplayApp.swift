@@ -44,7 +44,7 @@ struct DelugeDisplayApp: App {
                 .environmentObject(midiManager)
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 512, height: 192)
+        .defaultSize(width: 512, height: 440)
         .commandsRemoved()
         .commands {
             CommandGroup(replacing: .appInfo) {
