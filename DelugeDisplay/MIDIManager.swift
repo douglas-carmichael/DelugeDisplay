@@ -47,7 +47,15 @@ class MIDIManager: ObservableObject {
         }
     }
     
-    private var lastSelectedPortName: String? // Track last selected port
+    private var lastSelectedPortName: String? {
+        didSet {
+            if let name = lastSelectedPortName {
+                UserDefaults.standard.set(name, forKey: "lastSelectedPort")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "lastSelectedPort")
+            }
+        }
+    }
     
     private let expectedFrameSize = 128 * 6
     private let frameTimeout: TimeInterval = 0.1
@@ -113,6 +121,9 @@ class MIDIManager: ObservableObject {
     init() {
         // Load saved preferences or use defaults
         self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
+        
+        // Load last selected port name
+        self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
         
         // Convert stored integer back to Interpolation
         let savedQuality = UserDefaults.standard.integer(forKey: "smoothingQuality")
