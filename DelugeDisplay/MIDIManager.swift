@@ -13,7 +13,6 @@ class MIDIManager: ObservableObject {
     }
     @Published var smoothingQuality: Image.Interpolation {
         didSet {
-            // Store as integer
             let value: Int
             switch smoothingQuality {
             case .none: value = 0
@@ -26,16 +25,9 @@ class MIDIManager: ObservableObject {
         }
     }
     @Published var isWaitingForConnection = false
-    
-    struct MIDIPort: Identifiable {
-        let id: MIDIEndpointRef
-        let name: String
-    }
-    
     @Published var availablePorts: [MIDIPort] = []
     @Published var selectedPort: MIDIPort? {
         didSet {
-            // Immediately handle port changes
             if isConnected {
                 disconnect()
             }
@@ -45,6 +37,11 @@ class MIDIManager: ObservableObject {
                 connectToDeluge(portName: port.name)
             }
         }
+    }
+    
+    struct MIDIPort: Identifiable {
+        let id: MIDIEndpointRef
+        let name: String
     }
     
     private var lastSelectedPortName: String? {
@@ -57,122 +54,50 @@ class MIDIManager: ObservableObject {
         }
     }
     
+    private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
+    private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
     private let expectedFrameSize = 128 * 6
-    private let frameTimeout: TimeInterval = 0.1
+    private let frameTimeout: TimeInterval = 0.2
     private let maxDeltaFails = 3
-    
+    private let maxSysExSize = 1024 * 32
+    private let screenWidth = 128
+    private let screenHeight = 48
+    private let bytesPerRow = 128
+    private let numRows = 6
+    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
+    private let delugePortName = ""
+    private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
+    private let updateInterval: TimeInterval = 0.033 // ~30fps, more stable
     private var client: MIDIClientRef = 0
     private var inputPort: MIDIPortRef = 0
     private var outputPort: MIDIPortRef = 0
     private var delugeInput: MIDIEndpointRef?
     private var delugeOutput: MIDIEndpointRef?
     private var sysExBuffer: [UInt8] = []
-    private var fullFrameInitialized = false
     private var updateTimer: Timer?
-    private var fullFrameTimer: Timer?
-    private var lastFrameTime = Date()
-    private var deltaFailCount = 0
-    
-    private let screenWidth = 128
-    private let screenHeight = 48
-    private let bytesPerRow = 128
-    private let numRows = 6
-    
-    private let oledRequestSysex: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
-    
-    private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
-    private var pendingFrame: [UInt8]?
-    
-    private let maxSysExSize = 1024 * 16 // 16KB should be plenty for OLED frames
-    
     private var connectionTimer: Timer?
-    
-    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
-    private let delugePortName = ""
-    
-    private func flipByte(_ byte: UInt8) -> UInt8 {
-        var flipped: UInt8 = 0
-        for i in 0..<8 {
-            if (byte & (1 << i)) != 0 {
-                flipped |= (1 << (7 - i))
-            }
-        }
-        return flipped
-    }
-    
-    private func clearFrameBuffer() {
-        DispatchQueue.main.async {
-            self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
-        }
-    }
-    
-    private func drawWaitingMessage() {
-        // This is a placeholder - we'll need to implement the actual text drawing
-        // For now, just setting the first few bytes to indicate activity
-        DispatchQueue.main.async {
-            var newBuffer = Array(repeating: UInt8(0), count: self.expectedFrameSize)
-            // Set some pixels in the first row to show activity
-            newBuffer[0] = 0xFF
-            newBuffer[1] = 0xFF
-            self.frameBuffer = newBuffer
-        }
-    }
+    private var lastPacketTime = Date()
+    private var isProcessingSysEx = false
     
     init() {
-        // Load saved preferences or use defaults
         self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
-        
-        // Load last selected port name
         self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
-        
-        // Convert stored integer back to Interpolation
         let savedQuality = UserDefaults.standard.integer(forKey: "smoothingQuality")
         self.smoothingQuality = switch savedQuality {
-            case 0: .none
-            case 1: .low
-            case 3: .high
-            default: .medium
+        case 0: .none
+        case 1: .low
+        case 3: .high
+        default: .medium
         }
+        setupMIDI()
     }
     
     deinit {
         disconnect()
     }
     
-    private func scanAvailablePorts() {
-        var ports: [MIDIPort] = []
-        
-        for i in 0..<MIDIGetNumberOfDestinations() {
-            let endpoint = MIDIGetDestination(i)
-            var name: Unmanaged<CFString>?
-            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
-            if let n = name?.takeUnretainedValue() as String? {
-                ports.append(MIDIPort(id: endpoint, name: n))
-                
-                // Only auto-select Port 3 if no port was previously selected
-                if n.contains(delugePortName) && selectedPort == nil && lastSelectedPortName == nil {
-                    DispatchQueue.main.async {
-                        self.selectedPort = MIDIPort(id: endpoint, name: n)
-                    }
-                }
-                
-                // If this is the last selected port, reselect it
-                if let lastPort = lastSelectedPortName, n == lastPort {
-                    DispatchQueue.main.async {
-                        self.selectedPort = MIDIPort(id: endpoint, name: n)
-                    }
-                }
-            }
-        }
-        
-        DispatchQueue.main.async {
-            self.availablePorts = ports
-        }
-    }
-    
     func setupMIDI() {
         var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] _ in
-            // Only log significant MIDI system changes
             self?.logger.info("MIDI system changed - rescanning ports")
             self?.scanAvailablePorts()
         }
@@ -199,6 +124,35 @@ class MIDIManager: ObservableObject {
         startConnectionTimer()
     }
     
+    private func scanAvailablePorts() {
+        var ports: [MIDIPort] = []
+        
+        for i in 0..<MIDIGetNumberOfDestinations() {
+            let endpoint = MIDIGetDestination(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
+            if let n = name?.takeUnretainedValue() as String? {
+                ports.append(MIDIPort(id: endpoint, name: n))
+                
+                if n.contains(self.delugePortName) && self.selectedPort == nil && self.lastSelectedPortName == nil {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.selectedPort = MIDIPort(id: endpoint, name: n)
+                    }
+                }
+                
+                if let lastPort = self.lastSelectedPortName, n == lastPort {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.selectedPort = MIDIPort(id: endpoint, name: n)
+                    }
+                }
+            }
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.availablePorts = ports
+        }
+    }
+    
     private func connectToDeluge(portName: String) {
         lastSelectedPortName = portName
         
@@ -212,11 +166,9 @@ class MIDIManager: ObservableObject {
         isConnected = false
         clearFrameBuffer()
         
-        // Find matching input/output pair
         var foundOutput: MIDIEndpointRef?
         var foundInput: MIDIEndpointRef?
         
-        // First find output
         for i in 0..<MIDIGetNumberOfDestinations() {
             let endpoint = MIDIGetDestination(i)
             var name: Unmanaged<CFString>?
@@ -227,7 +179,6 @@ class MIDIManager: ObservableObject {
             }
         }
         
-        // Then find input
         for i in 0..<MIDIGetNumberOfSources() {
             let endpoint = MIDIGetSource(i)
             var name: Unmanaged<CFString>?
@@ -238,16 +189,14 @@ class MIDIManager: ObservableObject {
             }
         }
         
-        // Only proceed if we found both
         if let input = foundInput, let output = foundOutput {
             delugeInput = input
             delugeOutput = output
             
             MIDIPortConnectSource(inputPort, input, nil)
             startUpdateTimer()
-        } else {
-            isConnected = false
-            return
+            
+            requestFullFrame()
         }
     }
     
@@ -259,17 +208,15 @@ class MIDIManager: ObservableObject {
                   let port = self.selectedPort,
                   port.name == self.lastSelectedPortName else { return }
             
-            // Don't retry if ports aren't found
             if self.delugeInput == nil || self.delugeOutput == nil {
-                return
+                self.connectToDeluge(portName: port.name)
+            } else {
+                self.requestFullFrame()
             }
-            
-            self.connectToDeluge(portName: port.name)
         }
     }
     
     func disconnect() {
-        // Only log disconnects from active Deluge connections
         if isConnected {
             logger.info("Disconnected from Deluge on port: \(self.lastSelectedPortName ?? "unknown")")
         }
@@ -299,50 +246,7 @@ class MIDIManager: ObservableObject {
         delugeInput = nil
         delugeOutput = nil
         isConnected = false
-        fullFrameInitialized = false
         clearFrameBuffer()
-    }
-    
-    private func startUpdateTimer() {
-        updateTimer?.invalidate()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            self?.requestFullFrame()
-        }
-    }
-    
-    private func checkFrameTimeout() {
-        if Date().timeIntervalSince(lastFrameTime) > frameTimeout {
-            requestFullFrame()
-        }
-    }
-    
-    private func updateFrameBuffer(_ newFrame: [UInt8]) {
-        frameQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            guard newFrame.count == 128 * 6 else {
-                logger.error("Invalid frame size in update: \(newFrame.count)")
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self.frameBuffer = newFrame
-                self.lastFrameTime = Date()
-            }
-        }
-    }
-    
-    private func requestFullFrame() {
-        sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
-    }
-    
-    private func sendSysEx(_ data: [UInt8]) {
-        guard let output = delugeOutput else { return }
-        
-        var packetList = MIDIPacketList()
-        let packet = MIDIPacketListInit(&packetList)
-        _ = MIDIPacketListAdd(&packetList, 1024, packet, 0, data.count, data)
-        MIDISend(outputPort, output, &packetList)
     }
     
     private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
@@ -357,7 +261,7 @@ class MIDIManager: ObservableObject {
         let length = Int(packet.pointee.length)
         
         guard length > 0, length <= maxSysExSize else {
-            logger.error("Invalid MIDI packet length: \(length)")
+            sysExBuffer.removeAll()
             return
         }
         
@@ -365,51 +269,56 @@ class MIDIManager: ObservableObject {
             Array(buffer.prefix(length))
         }
         
-        for byte in bytes {
-            if sysExBuffer.count >= maxSysExSize {
-                logger.warning("SysEx buffer overflow, clearing")
-                sysExBuffer.removeAll()
-                return
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            for byte in bytes {
+                if byte == 0xf0 {
+                    self.sysExBuffer.removeAll()
+                    self.sysExBuffer.append(byte)
+                    self.isProcessingSysEx = true
+                } else if byte == 0xf7 && self.isProcessingSysEx {
+                    self.sysExBuffer.append(byte)
+                    self.processSysEx(self.sysExBuffer)
+                    self.sysExBuffer.removeAll()
+                    self.isProcessingSysEx = false
+                } else if self.isProcessingSysEx {
+                    if self.sysExBuffer.count < self.maxSysExSize {
+                        self.sysExBuffer.append(byte)
+                    } else {
+                        self.sysExBuffer.removeAll()
+                        self.isProcessingSysEx = false
+                    }
+                }
             }
-            sysExBuffer.append(byte)
-            if byte == 0xf7 {
-                processSysEx(sysExBuffer)
-                sysExBuffer.removeAll()
-            }
+            
+            self.lastPacketTime = Date()
         }
     }
     
     private func processSysEx(_ bytes: [UInt8]) {
         guard bytes.count >= 7,
-              bytes.count <= maxSysExSize,
               bytes[0] == 0xf0,
               bytes[1] == 0x7d,
               bytes[2] == 0x02,
-              bytes[3] == 0x40 else {
-            return
-        }
-        
-        let messageType = bytes[4]
-        
-        guard bytes.count >= 7,
+              bytes[3] == 0x40,
               bytes.last == 0xf7 else {
             return
         }
         
+        let messageType = bytes[4]
         let body = Array(bytes[6...(bytes.count - 2)])
         
         if messageType == 0x01 {
             do {
                 let (unpacked, _) = try unpack7to8RLE(body, maxBytes: expectedFrameSize)
                 guard unpacked.count == expectedFrameSize else {
-                    logger.error("Invalid frame size: \(unpacked.count)")
                     return
                 }
                 
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     if !self.isConnected {
-                        // Only log when we first start receiving valid OLED data
                         self.logger.info("Connected to Deluge on port: \(self.lastSelectedPortName ?? "unknown")")
                     }
                     self.isConnected = true
@@ -418,6 +327,45 @@ class MIDIManager: ObservableObject {
             } catch {
                 logger.error("Frame decode error: \(error.localizedDescription)")
             }
+        }
+    }
+    
+    private func startUpdateTimer() {
+        updateTimer?.invalidate()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
+            self?.requestFullFrameIfNecessary()
+        }
+    }
+    
+    private func requestFullFrameIfNecessary() {
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            if Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval {
+                self.requestFullFrame()
+            }
+        }
+    }
+    
+    private func requestFullFrame() {
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.sendSysEx([0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7])
+        }
+    }
+    
+    private func sendSysEx(_ data: [UInt8]) {
+        guard let output = delugeOutput else { return }
+        
+        var packetList = MIDIPacketList()
+        let packet = MIDIPacketListInit(&packetList)
+        _ = MIDIPacketListAdd(&packetList, 1024, packet, 0, data.count, data)
+        MIDISend(outputPort, output, &packetList)
+    }
+    
+    private func clearFrameBuffer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
         }
     }
 }

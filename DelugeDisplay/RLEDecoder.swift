@@ -28,13 +28,11 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             else if first < 60 { size = 5; off = 28 }
             else { continue }
             
-            // Validate size bounds
             if s + size > data.count {
                 logger.error("Dense packet truncated")
                 throw RLEError.truncatedData
             }
             
-            // Validate destination capacity
             if dst.count + size > maxBytes {
                 logger.error("Dense packet would exceed maxBytes")
                 break
@@ -69,15 +67,7 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             }
             s += 1
             
-            // Validate run length
-            runLen = min(runLen, 256)
-            
-            // Validate destination capacity
-            if dst.count + runLen > maxBytes {
-                logger.error("RLE packet would exceed maxBytes")
-                runLen = maxBytes - dst.count
-            }
-            
+            runLen = min(runLen, maxBytes - dst.count)
             if runLen > 0 {
                 dst.append(contentsOf: repeatElement(byte, count: runLen))
             }
@@ -92,38 +82,37 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
     var s = 0
     
     while s + 2 <= delta.count {
-        // Extract 14-bit offset value (7 bits from each byte)
-        let lowByte = delta[s] & 0x7F
-        let highByte = delta[s + 1] & 0x7F
-        let offset = Int(lowByte) | (Int(highByte) << 7)
+        guard s + 1 < delta.count else {
+            logger.error("Delta data truncated")
+            break
+        }
+        
+        let offset = Int(delta[s] & 0x7F) | (Int(delta[s + 1] & 0x7F) << 7)
         s += 2
         
-        // Strict offset validation
         if offset >= frameSize {
             logger.error("Invalid delta offset: \(offset), max: \(frameSize)")
-            // Skip this update but continue processing
-            // Find next potential valid marker
-            while s < delta.count && (delta[s] & 0x80) == 0 {
-                s += 1
-            }
-            continue
+            throw RLEError.truncatedData
         }
         
         let remaining = Array(delta[s...])
-        if remaining.isEmpty { break }
+        guard !remaining.isEmpty else { break }
         
         do {
-            let (unpacked, used) = try unpack7to8RLE(remaining, maxBytes: min(128, frameSize - offset))
+            let maxUpdateSize = min(128, frameSize - offset)
+            let (unpacked, used) = try unpack7to8RLE(remaining, maxBytes: maxUpdateSize)
+            
             if !unpacked.isEmpty {
-                // Double check bounds before applying
                 let updateLength = min(unpacked.count, frameSize - offset)
-                buffer.replaceSubrange(offset..<(offset + updateLength), with: unpacked.prefix(updateLength))
+                buffer.replaceSubrange(offset..<(offset + updateLength),
+                                    with: unpacked.prefix(updateLength))
             }
             s += used
         } catch {
-            // Skip to next potential update on error
-            logger.error("Delta decode error at offset \(offset)")
-            s += 1
+            logger.error("Delta decode error at offset \(offset): \(error.localizedDescription)")
+            while s < delta.count && (delta[s] & 0x80) == 0 {
+                s += 1
+            }
             continue
         }
     }
