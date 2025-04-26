@@ -101,6 +101,29 @@ struct DelugeDisplayApp: App {
                 
                 Divider()
                 
+                Button("Actual Size") {
+                    if let window = NSApplication.shared.windows.first {
+                        appDelegate.resetToMinimumSize(window: window)
+                    }
+                }
+                .keyboardShortcut("0", modifiers: .command)
+                
+                Button("Zoom In") {
+                    if let window = NSApplication.shared.windows.first {
+                        appDelegate.resizeWindow(scale: 1.25, window: window)
+                    }
+                }
+                .keyboardShortcut("+", modifiers: .command)
+                
+                Button("Zoom Out") {
+                    if let window = NSApplication.shared.windows.first {
+                        appDelegate.resizeWindow(scale: 0.8, window: window)
+                    }
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                
+                Divider()
+                
                 Toggle("Enable Smoothing", isOn: $midiManager.smoothingEnabled)
                     .keyboardShortcut("s", modifiers: .command)
                 
