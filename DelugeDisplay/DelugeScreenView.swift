@@ -9,7 +9,7 @@ struct DelugeScreenView: View {
     private let screenWidth = 128
     private let screenHeight = 48
     private let blocksHigh = 6
-    private let minimumScale: CGFloat = 3.5  // Increased scale
+    private let minimumScale: CGFloat = 2.0
     
     private let logger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView")
     

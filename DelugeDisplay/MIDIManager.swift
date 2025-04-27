@@ -67,7 +67,7 @@ class MIDIManager: ObservableObject {
     private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
     private let delugePortName = ""
     private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
-    private let updateInterval: TimeInterval = 0.033 // ~30fps, more stable
+    private let updateInterval: TimeInterval = 0.05
     private var client: MIDIClientRef = 0
     private var inputPort: MIDIPortRef = 0
     private var outputPort: MIDIPortRef = 0
@@ -262,6 +262,7 @@ class MIDIManager: ObservableObject {
         
         guard length > 0, length <= maxSysExSize else {
             sysExBuffer.removeAll()
+            isProcessingSysEx = false
             return
         }
         
@@ -288,6 +289,7 @@ class MIDIManager: ObservableObject {
                     } else {
                         self.sysExBuffer.removeAll()
                         self.isProcessingSysEx = false
+                        self.logger.error("SysEx buffer overflow")
                     }
                 }
             }
