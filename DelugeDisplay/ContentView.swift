@@ -13,7 +13,7 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            Color.black
+            Color(midiManager.displayColorMode == .normal ? .black : .white)
                 .ignoresSafeArea()
             
             if midiManager.isConnected {
@@ -21,7 +21,8 @@ struct ContentView: View {
                     DelugeScreenView(
                         frameBuffer: midiManager.frameBuffer,
                         smoothingEnabled: midiManager.smoothingEnabled,
-                        smoothingQuality: midiManager.smoothingQuality
+                        smoothingQuality: midiManager.smoothingQuality,
+                        colorMode: midiManager.displayColorMode
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -31,7 +32,7 @@ struct ContentView: View {
                 .frame(minWidth: 256, minHeight: 96)
             } else {
                 Text("Waiting for Deluge connection...")
-                    .foregroundColor(.white)
+                    .foregroundColor(midiManager.displayColorMode == .normal ? .white : .black)
             }
         }
         .onAppear {

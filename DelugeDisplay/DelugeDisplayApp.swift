@@ -38,6 +38,72 @@ struct DelugeDisplayApp: App {
         }
     }
     
+    private var displayModeMenu: some View {
+        Group {
+            Toggle("Show OLED", isOn: Binding(
+                get: { displayMode == .oled },
+                set: { if $0 { displayMode = .oled } }
+            ))
+            .keyboardShortcut("1", modifiers: .command)
+            
+            Toggle("Show 7SEG", isOn: Binding(
+                get: { displayMode == .sevenSegment },
+                set: { if $0 { displayMode = .sevenSegment } }
+            ))
+            .keyboardShortcut("2", modifiers: .command)
+        }
+    }
+    
+    private var displayColorMenu: some View {
+        Menu("Display Colors") {
+            ForEach(DelugeDisplayColorMode.allCases, id: \.self) { mode in
+                Toggle(mode.rawValue, isOn: Binding(
+                    get: { midiManager.displayColorMode == mode },
+                    set: { if $0 { midiManager.displayColorMode = mode } }
+                ))
+            }
+        }
+    }
+    
+    private var zoomControls: some View {
+        Group {
+            Button("Actual Size") {
+                if let window = NSApplication.shared.windows.first {
+                    appDelegate.resetToMinimumSize(window: window)
+                }
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            
+            Button("Zoom In") {
+                if let window = NSApplication.shared.windows.first {
+                    appDelegate.resizeWindow(scale: 1.25, window: window)
+                }
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            
+            Button("Zoom Out") {
+                if let window = NSApplication.shared.windows.first {
+                    appDelegate.resizeWindow(scale: 0.8, window: window)
+                }
+            }
+            .keyboardShortcut("-", modifiers: .command)
+        }
+    }
+    
+    private var smoothingControls: some View {
+        Group {
+            Toggle("Enable Smoothing", isOn: $midiManager.smoothingEnabled)
+                .keyboardShortcut("s", modifiers: .command)
+            
+            Picker("Smoothing Quality", selection: $midiManager.smoothingQuality) {
+                Text("Low").tag(Image.Interpolation.low)
+                Text("Medium").tag(Image.Interpolation.medium)
+                Text("High").tag(Image.Interpolation.high)
+            }
+            .disabled(!midiManager.smoothingEnabled)
+        }
+    }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -50,7 +116,6 @@ struct DelugeDisplayApp: App {
         .windowStyle(.automatic)
         .windowToolbarStyle(.unified)
         .defaultPosition(.center)
-        .commandsRemoved()
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About DelugeDisplay") {
@@ -59,10 +124,6 @@ struct DelugeDisplayApp: App {
                 
                 Divider()
                 
-                // Services group (empty but keeping divider for HIG compliance)
-                Divider()
-                
-                // Application termination group
                 Button("Hide DelugeDisplay") {
                     NSApplication.shared.hide(nil)
                 }
@@ -85,57 +146,22 @@ struct DelugeDisplayApp: App {
                 .keyboardShortcut("q", modifiers: .command)
             }
             
-            // Custom View menu
             CommandGroup(replacing: .sidebar) {
-                Toggle("Show OLED", isOn: Binding(
-                    get: { displayMode == .oled },
-                    set: { if $0 { displayMode = .oled } }
-                ))
-                    .keyboardShortcut("1", modifiers: .command)
-                
-                Toggle("Show 7SEG", isOn: Binding(
-                    get: { displayMode == .sevenSegment },
-                    set: { if $0 { displayMode = .sevenSegment } }
-                ))
-                    .keyboardShortcut("2", modifiers: .command)
+                displayModeMenu
                 
                 Divider()
                 
-                Button("Actual Size") {
-                    if let window = NSApplication.shared.windows.first {
-                        appDelegate.resetToMinimumSize(window: window)
-                    }
-                }
-                .keyboardShortcut("0", modifiers: .command)
-                
-                Button("Zoom In") {
-                    if let window = NSApplication.shared.windows.first {
-                        appDelegate.resizeWindow(scale: 1.25, window: window)
-                    }
-                }
-                .keyboardShortcut("+", modifiers: .command)
-                
-                Button("Zoom Out") {
-                    if let window = NSApplication.shared.windows.first {
-                        appDelegate.resizeWindow(scale: 0.8, window: window)
-                    }
-                }
-                .keyboardShortcut("-", modifiers: .command)
+                displayColorMenu
                 
                 Divider()
                 
-                Toggle("Enable Smoothing", isOn: $midiManager.smoothingEnabled)
-                    .keyboardShortcut("s", modifiers: .command)
+                zoomControls
                 
-                Picker("Smoothing Quality", selection: $midiManager.smoothingQuality) {
-                    Text("Low").tag(Image.Interpolation.low)
-                    Text("Medium").tag(Image.Interpolation.medium)
-                    Text("High").tag(Image.Interpolation.high)
-                }
-                .disabled(!midiManager.smoothingEnabled)
+                Divider()
+                
+                smoothingControls
             }
             
-            // Add MIDI menu
             CommandMenu("MIDI") {
                 midiPortItems
             }

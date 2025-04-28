@@ -5,6 +5,7 @@ struct DelugeScreenView: View {
     let frameBuffer: [UInt8]
     let smoothingEnabled: Bool
     let smoothingQuality: Image.Interpolation
+    let colorMode: DelugeDisplayColorMode
     
     private let screenWidth = 128
     private let screenHeight = 48
@@ -37,10 +38,22 @@ struct DelugeScreenView: View {
             return nil
         }
         
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1.0))
+        let backgroundColor: CGColor
+        let foregroundColor: CGColor
+        
+        switch colorMode {
+        case .normal:
+            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+            foregroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
+        case .inverted:
+            backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
+            foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        }
+        
+        context.setFillColor(backgroundColor)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         
-        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+        context.setFillColor(foregroundColor)
         
         for blk in 0..<blocksHigh {
             for row in 0..<8 {
@@ -80,8 +93,11 @@ struct DelugeScreenView: View {
                     let resolvedImage = Image(image, scale: 1.0, label: Text(""))
                         .interpolation(smoothingEnabled ? smoothingQuality : .none)
                     
-                    // Fill the entire canvas with black first
-                    context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+                    // Fill the entire canvas with background color
+                    context.fill(
+                        Path(CGRect(origin: .zero, size: size)),
+                        with: .color(colorMode == .normal ? .black : .white)
+                    )
                     
                     // Calculate dimensions to maintain aspect ratio while filling available space
                     let availableAspect = size.width / size.height
@@ -115,7 +131,7 @@ struct DelugeScreenView: View {
             idealHeight: CGFloat(screenHeight) * minimumScale
         )
         .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
-        .background(Color.black)
+        .background(colorMode == .normal ? Color.black : Color.white)
         .edgesIgnoringSafeArea(.all)
     }
 }

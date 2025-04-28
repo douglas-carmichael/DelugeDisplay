@@ -5,7 +5,7 @@ import OSLog
 
 class MIDIManager: ObservableObject {
     @Published var isConnected = false
-    @Published var frameBuffer: [UInt8] = Array(repeating: 0, count: 128 * 6)
+    @Published var frameBuffer: [UInt8] = []
     @Published var smoothingEnabled: Bool {
         didSet {
             UserDefaults.standard.set(smoothingEnabled, forKey: "smoothingEnabled")
@@ -38,6 +38,7 @@ class MIDIManager: ObservableObject {
             }
         }
     }
+    @Published var displayColorMode: DelugeDisplayColorMode = .normal
     
     struct MIDIPort: Identifiable {
         let id: MIDIEndpointRef
@@ -80,7 +81,8 @@ class MIDIManager: ObservableObject {
     private var isProcessingSysEx = false
     
     init() {
-        self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
+        self.smoothingEnabled = true
+        self.smoothingQuality = .medium
         self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
         let savedQuality = UserDefaults.standard.integer(forKey: "smoothingQuality")
         self.smoothingQuality = switch savedQuality {
