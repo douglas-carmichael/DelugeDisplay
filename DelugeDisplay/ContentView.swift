@@ -27,7 +27,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .aspectRatio(128/48, contentMode: .fit)
-                .padding(8)
+                .padding(2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minWidth: 256, minHeight: 96)
             } else {

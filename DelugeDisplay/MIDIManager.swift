@@ -13,6 +13,7 @@ class MIDIManager: ObservableObject {
     }
     @Published var smoothingQuality: Image.Interpolation {
         didSet {
+            // Store interpolation as integer
             let value: Int
             switch smoothingQuality {
             case .none: value = 0
@@ -38,7 +39,11 @@ class MIDIManager: ObservableObject {
             }
         }
     }
-    @Published var displayColorMode: DelugeDisplayColorMode = .normal
+    @Published var displayColorMode: DelugeDisplayColorMode {
+        didSet {
+            UserDefaults.standard.set(displayColorMode.rawValue, forKey: "displayColorMode")
+        }
+    }
     
     struct MIDIPort: Identifiable {
         let id: MIDIEndpointRef
@@ -81,16 +86,26 @@ class MIDIManager: ObservableObject {
     private var isProcessingSysEx = false
     
     init() {
-        self.smoothingEnabled = true
-        self.smoothingQuality = .medium
-        self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
-        let savedQuality = UserDefaults.standard.integer(forKey: "smoothingQuality")
-        self.smoothingQuality = switch savedQuality {
-        case 0: .none
-        case 1: .low
-        case 3: .high
-        default: .medium
+        // Load saved preferences
+        self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
+        
+        // Load interpolation from stored integer
+        let interpolationValue = UserDefaults.standard.integer(forKey: "smoothingQuality")
+        switch interpolationValue {
+        case 0: self.smoothingQuality = .none
+        case 1: self.smoothingQuality = .low
+        case 2: self.smoothingQuality = .medium
+        case 3: self.smoothingQuality = .high
+        default: self.smoothingQuality = .medium
         }
+        
+        if let savedMode = UserDefaults.standard.string(forKey: "displayColorMode"),
+           let mode = DelugeDisplayColorMode(rawValue: savedMode) {
+            self.displayColorMode = mode
+        } else {
+            self.displayColorMode = .normal
+        }
+        self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
         setupMIDI()
     }
     
