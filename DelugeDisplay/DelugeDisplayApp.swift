@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct DelugeDisplayApp: App {
@@ -144,6 +145,19 @@ struct DelugeDisplayApp: App {
                     NSApplication.shared.terminate(nil)
                 }
                 .keyboardShortcut("q", modifiers: .command)
+            }
+            
+            CommandGroup(replacing: .newItem) {
+                Button("Save Screenshot...") {
+                    if midiManager.isConnected {
+                        DelugeScreenView.saveScreenshotFromCurrentDisplay(
+                            frameBuffer: midiManager.frameBuffer,
+                            colorMode: midiManager.displayColorMode
+                        )
+                    }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!midiManager.isConnected)
             }
             
             CommandGroup(replacing: .sidebar) {

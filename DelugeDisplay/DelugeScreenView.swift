@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import UniformTypeIdentifiers
 
 struct DelugeScreenView: View {
     let frameBuffer: [UInt8]
@@ -24,14 +25,17 @@ struct DelugeScreenView: View {
         return flipped
     }
     
-    private func createImage(width: Int, height: Int) -> CGImage? {
+    private func createImage(width: Int, height: Int, scale: Int = 1) -> CGImage? {
+        let scaledWidth = width * scale
+        let scaledHeight = height * scale
+        
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
         guard let context = CGContext(data: nil,
-                              width: width,
-                              height: height,
+                              width: scaledWidth,
+                              height: scaledHeight,
                               bitsPerComponent: 8,
-                              bytesPerRow: width * 4,
+                              bytesPerRow: scaledWidth * 4,
                               space: colorSpace,
                               bitmapInfo: bitmapInfo.rawValue) else {
             logger.error("Failed to create CGContext")
@@ -51,7 +55,7 @@ struct DelugeScreenView: View {
         }
         
         context.setFillColor(backgroundColor)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.fill(CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
         
         context.setFillColor(foregroundColor)
         
@@ -69,12 +73,12 @@ struct DelugeScreenView: View {
                     let pixelOn = (byte & mask) != 0
                     
                     if pixelOn {
-                        let y = height - (blk * 8 + (7 - row)) - 1
+                        let y = scaledHeight - (blk * 8 + (7 - row)) * scale - scale
                         context.fill(CGRect(
-                            x: col,
+                            x: col * scale,
                             y: y,
-                            width: 1,
-                            height: 1
+                            width: scale,
+                            height: scale
                         ))
                     }
                 }
@@ -82,6 +86,82 @@ struct DelugeScreenView: View {
         }
         
         return context.makeImage()
+    }
+    
+    static func saveScreenshotFromCurrentDisplay(frameBuffer: [UInt8], colorMode: DelugeDisplayColorMode) {
+        let view = DelugeScreenView(
+            frameBuffer: frameBuffer,
+            smoothingEnabled: false,
+            smoothingQuality: .none,
+            colorMode: colorMode
+        )
+        
+        // Create a 4x scaled image for the screenshot
+        guard let image = view.createImage(width: view.screenWidth, height: view.screenHeight, scale: 4) else {
+            view.logger.error("Failed to create image for screenshot")
+            return
+        }
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let timestamp = dateFormatter.string(from: Date())
+        let filename = "DelugeDisplay_\(timestamp).png"
+        
+        let savePanel = NSSavePanel()
+        savePanel.nameFieldStringValue = filename
+        savePanel.allowedContentTypes = [UTType.png]
+        savePanel.canCreateDirectories = true
+        
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    view.logger.error("Failed to create image destination")
+                    return
+                }
+                
+                let properties = [kCGImagePropertyDPIWidth: 144,
+                                kCGImagePropertyDPIHeight: 144]
+                CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+                
+                if !CGImageDestinationFinalize(destination) {
+                    view.logger.error("Failed to save screenshot")
+                }
+            }
+        }
+    }
+    
+    func saveScreenshot() {
+        guard let image = createImage(width: screenWidth, height: screenHeight) else {
+            logger.error("Failed to create image for screenshot")
+            return
+        }
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let timestamp = dateFormatter.string(from: Date())
+        let filename = "DelugeDisplay_\(timestamp).png"
+        
+        let savePanel = NSSavePanel()
+        savePanel.nameFieldStringValue = filename
+        savePanel.allowedContentTypes = [UTType.png]
+        savePanel.canCreateDirectories = true
+        
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    logger.error("Failed to create image destination")
+                    return
+                }
+                
+                let properties = [kCGImagePropertyDPIWidth: 144,
+                                kCGImagePropertyDPIHeight: 144]
+                CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+                
+                if !CGImageDestinationFinalize(destination) {
+                    logger.error("Failed to save screenshot")
+                }
+            }
+        }
     }
     
     var body: some View {
