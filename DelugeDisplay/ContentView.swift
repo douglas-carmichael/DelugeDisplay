@@ -45,8 +45,11 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minWidth: 256, minHeight: 96)
             } else {
-                Text("Waiting for Deluge connection...")
+                Text("WAITING FOR DELUGE")
+                    .font(.system(.title, design: .monospaced))
                     .foregroundColor(midiManager.displayColorMode == .normal ? .white : .black)
+                    .fontWeight(.bold)
+                    .textCase(.uppercase)
             }
         }
         .onAppear {
