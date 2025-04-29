@@ -45,14 +45,15 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minWidth: 256, minHeight: 96)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
+                GeometryReader { geometry in
                     DelugeFont.renderText(
                         "WAITING FOR DELUGE",
                         color: midiManager.displayColorMode == .normal ? .white : .black
                     )
-                    .frame(minHeight: 96)
                 }
-                .frame(maxWidth: .infinity)
+                .aspectRatio(128/48, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 256, minHeight: 96)
             }
         }
         .frame(minWidth: 256, minHeight: 96)

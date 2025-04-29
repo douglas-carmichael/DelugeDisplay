@@ -254,12 +254,25 @@ struct DelugeFont {
     ]
     
     static func renderText(_ text: String, color: Color = .white) -> some View {
-        HStack(spacing: CGFloat(spacing)) {
-            ForEach(Array(text.uppercased()), id: \.self) { char in
-                if let bitmap = characters[String(char)] {
-                    characterView(bitmap: bitmap, color: color)
+        GeometryReader { geometry in
+            let baseText = HStack(spacing: CGFloat(spacing)) {
+                ForEach(Array(text.uppercased()), id: \.self) { char in
+                    if let bitmap = characters[String(char)] {
+                        characterView(bitmap: bitmap, color: color)
+                    }
                 }
             }
+            
+            let textWidth = CGFloat(text.count * (characterWidth + spacing) - spacing) * 8
+            let textHeight = CGFloat(characterHeight) * 8
+            let scaleX = geometry.size.width / textWidth
+            let scaleY = geometry.size.height / textHeight
+            let scale = min(scaleX, scaleY) * 0.8 // 80% of available space
+            
+            baseText
+                .fixedSize()
+                .scaleEffect(scale)
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
         }
     }
     
