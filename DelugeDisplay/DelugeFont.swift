@@ -267,7 +267,7 @@ struct DelugeFont {
             let textHeight = CGFloat(characterHeight) * 8
             let scaleX = geometry.size.width / textWidth
             let scaleY = geometry.size.height / textHeight
-            let scale = min(scaleX, scaleY) * 0.8 // 80% of available space
+            let scale = min(scaleX, scaleY) * 1.05 // Perfect size for the display
             
             baseText
                 .fixedSize()
@@ -283,7 +283,7 @@ struct DelugeFont {
                     ForEach(0..<bitmap[row].count, id: \.self) { col in
                         Rectangle()
                             .fill(bitmap[row][col] ? color : .clear)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 10, height: 10)
                     }
                 }
             }

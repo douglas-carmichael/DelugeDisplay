@@ -18,7 +18,7 @@ struct ContentView: View {
         guard let window = NSApplication.shared.windows.first,
               let contentView = window.contentView,
               let hostingView = contentView.subviews.first as? NSHostingView<ContentView>,
-              let screenView = hostingView.findViewWithTag("DelugeScreenView") as? DelugeScreenView else {
+              let screenView = hostingView.subviews.first(where: { $0 is DelugeScreenView }) as? DelugeScreenView else {
             return
         }
         
