@@ -118,35 +118,6 @@ struct DelugeDisplayApp: App {
         .windowToolbarStyle(.unified)
         .defaultPosition(.center)
         .commands {
-            CommandGroup(replacing: .appInfo) {
-                Button("About DelugeDisplay") {
-                    appDelegate.showAboutWindow()
-                }
-                
-                Divider()
-                
-                Button("Hide DelugeDisplay") {
-                    NSApplication.shared.hide(nil)
-                }
-                .keyboardShortcut("h", modifiers: .command)
-                
-                Button("Hide Others") {
-                    NSApplication.shared.hideOtherApplications(nil)
-                }
-                .keyboardShortcut("h", modifiers: [.command, .option])
-                
-                Button("Show All") {
-                    NSApplication.shared.unhideAllApplications(nil)
-                }
-                
-                Divider()
-                
-                Button("Quit DelugeDisplay") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .keyboardShortcut("q", modifiers: .command)
-            }
-            
             CommandGroup(replacing: .newItem) {
                 Button("Save Screenshot...") {
                     if midiManager.isConnected {

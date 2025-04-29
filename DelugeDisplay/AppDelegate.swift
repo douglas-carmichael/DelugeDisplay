@@ -23,6 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 height: minHeight / backingScaleFactor
             )
         }
+        
     }
     
     public func resetToMinimumSize(window: NSWindow) {
@@ -97,37 +98,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                abs(window.frame.size.height - minWindowHeight) < 1.0
     }
     
-    private func setupResizeMenuItems() {
-        guard let viewMenu = NSApp.mainMenu?.item(withTitle: "View")?.submenu else { return }
-        
-        let zoomInItem = NSMenuItem(
-            title: "Zoom In",
-            action: #selector(zoomIn),
-            keyEquivalent: "+"
-        )
-        
-        let zoomOutItem = NSMenuItem(
-            title: "Zoom Out",
-            action: #selector(zoomOut),
-            keyEquivalent: "-"
-        )
-        
-        viewMenu.addItem(zoomInItem)
-        viewMenu.addItem(zoomOutItem)
-    }
-    
-    @objc private func zoomIn() {
-        if let window = NSApplication.shared.windows.first {
-            resizeWindow(scale: 1.25, window: window)
-        }
-    }
-    
-    @objc private func zoomOut() {
-        if let window = NSApplication.shared.windows.first {
-            resizeWindow(scale: 1.0 / 1.25, window: window)
-        }
-    }
-    
     func windowDidMove(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
             // Update stored Y position when user moves the window
@@ -189,7 +159,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         midiManager.disconnect()
     }
     
-    func showAboutWindow() {
+    @objc func showAboutWindow() {
         if aboutWindow == nil {
             let aboutView = AboutView()
             let hostingController = NSHostingController(rootView: aboutView)

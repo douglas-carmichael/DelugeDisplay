@@ -10,18 +10,10 @@ import CoreMIDI
 
 struct ContentView: View {
     @EnvironmentObject var midiManager: MIDIManager
+    @State private var screenViewRef: DelugeScreenView?
     
     func saveScreenshot() {
-        guard midiManager.isConnected else { return }
-        
-        // Find the DelugeScreenView by looking through the view hierarchy
-        guard let window = NSApplication.shared.windows.first,
-              let contentView = window.contentView,
-              let hostingView = contentView.subviews.first as? NSHostingView<ContentView>,
-              let screenView = hostingView.subviews.first(where: { $0 is DelugeScreenView }) as? DelugeScreenView else {
-            return
-        }
-        
+        guard midiManager.isConnected, let screenView = screenViewRef else { return }
         screenView.saveScreenshot()
     }
     
@@ -38,6 +30,9 @@ struct ContentView: View {
                         smoothingQuality: midiManager.smoothingQuality,
                         colorMode: midiManager.displayColorMode
                     )
+                    .introspectDelugeScreenView { view in
+                        screenViewRef = view
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .aspectRatio(128/48, contentMode: .fit)
@@ -60,22 +55,6 @@ struct ContentView: View {
         .onAppear {
             midiManager.setupMIDI()
         }
-    }
-}
-
-extension NSView {
-    func findViewWithTag(_ tag: String) -> NSView? {
-        if let tagged = self.value(forKey: "tag") as? String, tagged == tag {
-            return self
-        }
-        
-        for subview in self.subviews {
-            if let found = subview.findViewWithTag(tag) {
-                return found
-            }
-        }
-        
-        return nil
     }
 }
 
