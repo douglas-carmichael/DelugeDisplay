@@ -150,6 +150,8 @@ struct DelugeDisplayApp: App {
             CommandMenu("MIDI") {
                 midiPortItems
             }
+            
+            CommandGroup(replacing: .saveItem) { }
         }
     }
 }

@@ -9,6 +9,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var initialWindowY: CGFloat?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Remove standard menu items
+        if let mainMenu = NSApplication.shared.mainMenu {
+            if let fileMenu = mainMenu.item(withTitle: "File")?.submenu {
+                fileMenu.removeItem(at: fileMenu.indexOfItem(withTitle: "Close"))
+            }
+        }
+        
         if let window = NSApplication.shared.windows.first {
             window.delegate = self
             window.contentView?.layerContentsRedrawPolicy = .onSetNeedsDisplay
