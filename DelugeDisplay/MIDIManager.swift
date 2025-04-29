@@ -84,6 +84,8 @@ class MIDIManager: ObservableObject {
     private var connectionTimer: Timer?
     private var lastPacketTime = Date()
     private var isProcessingSysEx = false
+    private var lastScanTime: Date = Date()
+    private let minimumScanInterval: TimeInterval = 1.0 // Minimum time between scans
     
     init() {
         // Load saved preferences
@@ -115,8 +117,15 @@ class MIDIManager: ObservableObject {
     
     func setupMIDI() {
         var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] _ in
-            self?.logger.info("MIDI system changed - rescanning ports")
-            self?.scanAvailablePorts()
+            guard let self = self else { return }
+            
+            // Only scan if enough time has passed since last scan
+            let now = Date()
+            if now.timeIntervalSince(self.lastScanTime) >= self.minimumScanInterval {
+                self.logger.info("MIDI system changed - rescanning ports")
+                self.scanAvailablePorts()
+                self.lastScanTime = now
+            }
         }
         guard status == noErr else {
             logger.error("Failed to create MIDI client: \(status)")

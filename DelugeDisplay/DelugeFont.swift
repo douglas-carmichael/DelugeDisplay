@@ -256,7 +256,7 @@ struct DelugeFont {
     static func renderText(_ text: String, color: Color = .white) -> some View {
         GeometryReader { geometry in
             let baseText = HStack(spacing: CGFloat(spacing)) {
-                ForEach(Array(text.uppercased()), id: \.self) { char in
+                ForEach(Array(text.uppercased().enumerated()), id: \.offset) { index, char in
                     if let bitmap = characters[String(char)] {
                         characterView(bitmap: bitmap, color: color)
                     }
