@@ -45,13 +45,17 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minWidth: 256, minHeight: 96)
             } else {
-                Text("WAITING FOR DELUGE")
-                    .font(.system(.title, design: .monospaced))
-                    .foregroundColor(midiManager.displayColorMode == .normal ? .white : .black)
-                    .fontWeight(.bold)
-                    .textCase(.uppercase)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    DelugeFont.renderText(
+                        "WAITING FOR DELUGE",
+                        color: midiManager.displayColorMode == .normal ? .white : .black
+                    )
+                    .frame(minHeight: 96)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
+        .frame(minWidth: 256, minHeight: 96)
         .onAppear {
             midiManager.setupMIDI()
         }
