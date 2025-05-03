@@ -12,9 +12,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Remove standard menu items
         if let mainMenu = NSApplication.shared.mainMenu {
             if let fileMenu = mainMenu.item(withTitle: "File")?.submenu {
-                fileMenu.removeItem(at: fileMenu.indexOfItem(withTitle: "Close"))
+                let closeIndex = fileMenu.indexOfItem(withTitle: "Close")
+                if closeIndex >= 0 {
+                    fileMenu.removeItem(at: closeIndex)
+                }
             }
         }
+
         
         if let window = NSApplication.shared.windows.first {
             window.delegate = self
