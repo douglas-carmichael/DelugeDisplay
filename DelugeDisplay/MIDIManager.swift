@@ -76,7 +76,6 @@ class MIDIManager: ObservableObject {
         didSet {
             guard oldValue != self.displayMode else { return }
 
-            // Existing code
             let generation = self.displayLogicGeneration &+ 1
             self.displayLogicGeneration = generation
             logger.debug("Display mode changed. New generation: \(generation)")
@@ -109,54 +108,55 @@ class MIDIManager: ObservableObject {
                 UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
                 
                 if previousMode == .sevenSegment && currentMode == .oled {
-                    // 1. Tell Deluge to switch its mode IMMEDIATELY
-                    logger.info("7SEG->OLED: Sending toggle command immediately. Gen: \(generation)")
+                    // 1. Clear frame buffer immediately for a clean slate.
+                    logger.info("7SEG->OLED: Clearing frame buffer immediately. Gen: \(generation)")
+                    self.clearFrameBuffer() // Ensures DelugeScreenView starts blank.
+                    
+                    // 2. Tell Deluge to switch its mode
+                    logger.info("7SEG->OLED: Sending toggle command. Gen: \(generation)")
                     sendDisplayToggleCommand()
                     
-                    // 2. Delay further actions to allow Deluge to send transitional frame
+                    // 3. Delay further actions to allow Deluge to process toggle and send a potential transitional frame (which we might ignore or overwrite)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.075) { // 75ms delay (tune this)
                         // Only proceed if mode and generation haven't changed again
                         if self.displayMode == .oled && self.displayLogicGeneration == generation {
-                            // 3. Clear the app's frameBuffer AFTER the delay (to catch the transitional frame)
-                            self.logger.info("7SEG->OLED: Delayed: Clearing frame buffer. Gen: \(generation)")
-                            self.clearFrameBuffer()
+                            // 4. Optional: Re-clear the app's frameBuffer if Deluge sends a transitional frame we don't want.
+                            //    If immediate clear + Deluge toggle is clean, this might not be needed.
+                            //    For now, let's assume the immediate clear is sufficient and Deluge won't send garbage
+                            //    that briefly appears before proper OLED data.
+                            // self.logger.info("7SEG->OLED: Delayed: Optionally re-clearing frame buffer. Gen: \(generation)")
+                            // self.clearFrameBuffer() 
                             
-                            // 4. Request actual OLED data
+                            // 5. Request actual OLED data
                             self.logger.info("7SEG->OLED: Delayed: Requesting OLED data. Gen: \(generation)")
                             self.requestDisplayData(forMode: .oled)
                             
-                            // 5. Start the update timer (if not already started by a different path)
-                            //    Or ensure it's using the correct generation.
+                            // 6. Start the update timer *here*, after all transition steps.
+                            self.logger.info("7SEG->OLED: Delayed: Starting update timer. Gen: \(generation)")
                             self.startUpdateTimer(forExplicitMode: .oled, generation: generation)
                         } else {
                             self.logger.info("7SEG->OLED: Delayed action skipped due to mode/gen change. Expected OLED/Gen\(generation), got \(self.displayMode.rawValue)/Gen\(self.displayLogicGeneration)")
                         }
                     }
-                    // If the timer starts before the buffer is cleared and data requested,
-                    // it might try to request data too soon.
-                    // Let's ensure the timer is (re)started *after* the clear and first request within the delay block.
-                    // So, we might not call startUpdateTimer here, but inside the asyncAfter.
-                    // For now, the existing startUpdateTimer call below will handle other cases.
-                    // If we don't start it here, OLED view might be blank for the delay duration.
-                    // This is a trade-off. Let's try starting it after the data request.
-                    // The main `startUpdateTimer` outside this if/else will be for other transitions.
-                    // We need a timer for OLED mode that respects the new generation.
-                    // Let's start it here but it won't request until connected & delay passed by its own logic.
-                     startUpdateTimer(forExplicitMode: currentMode, generation: generation)
-
+                    // startUpdateTimer(forExplicitMode: currentMode, generation: generation)
 
                 } else { // For OLED -> 7SEG, or any other non-problematic transitions
                     if currentMode == .oled && previousMode == .oled { // e.g. port change while in OLED
                         clearFrameBuffer() // Ensure it's clean
                         logger.debug("OLED->OLED (e.g. port change): Ensuring frame buffer is clear. Gen: \(generation)")
                     }
-                    sendDisplayToggleCommand()
+                    // For OLED->7SEG or other direct transitions, send toggle, request data, and start timer immediately.
+                    sendDisplayToggleCommand() // This might be problematic if Deluge expects toggle ONLY for 7SEG->OLED.
+                                               // If OLED->7SEG also needs a toggle, it's fine.
+                                               // If not, this toggle might flip it back to OLED if it was already 7SEG.
+                                               // We established earlier that toggle is needed for *any* switch.
                     requestDisplayData(forMode: currentMode)
                     startUpdateTimer(forExplicitMode: currentMode, generation: generation)
                 }
             } else { // isSettingInitialMode == true
                 logger.info("Initial display mode programmatically set from \(previousMode.rawValue) to \(currentMode.rawValue). Gen: \(generation)")
                 UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
+                
                 // Initial probe logic handles requests and timer.
                 // However, if initial mode is set to OLED (e.g. from UserDefaults),
                 // and it was previously 7SEG (hypothetically), this special delay logic wouldn't run.
