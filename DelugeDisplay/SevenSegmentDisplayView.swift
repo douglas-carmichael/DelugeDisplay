@@ -2,10 +2,13 @@ import SwiftUI
 
 struct SevenSegmentDisplayView: View {
     @EnvironmentObject var midiManager: MIDIManager
-    
-    // Constants for display layout
-    private let digitSpacing: CGFloat = 10 // Spacing between digits
-    private let displayScale: CGFloat = 0.7 // Overall scale of the digits
+    let availableSize: CGSize
+
+    private let intrinsicDigitWidth: CGFloat = 60 
+    private let intrinsicDigitHeight: CGFloat = 120
+    private let intrinsicDigitSpacing: CGFloat = 10 
+    private let digitSpacing: CGFloat = 10 
+
 
     private var activeColor: Color {
         switch midiManager.displayColorMode {
@@ -19,61 +22,54 @@ struct SevenSegmentDisplayView: View {
     private var inactiveColor: Color {
         switch midiManager.displayColorMode {
         case .normal:
-            return Color(red: 0.2, green: 0, blue: 0) // Dark red
+            return Color(red: 0.2, green: 0, blue: 0) 
         case .inverted:
             return .red
         }
     }
 
     var body: some View {
-        // Use GeometryReader to explicitly center the content
-        GeometryReader { geometry in
-            HStack(spacing: digitSpacing) {
-                // Ensure we have 4 digits, provide defaults if not
+        let calculatedScale: CGFloat = {
+            let paddingSize: CGFloat = 16 * 2 
+            let effectiveWidth = max(0, availableSize.width - paddingSize)
+            let effectiveHeight = max(0, availableSize.height - paddingSize)
+
+            let totalIntrinsicWidthForDigits = (4 * intrinsicDigitWidth) + (3 * digitSpacing)
+            let totalIntrinsicHeightForDigits = intrinsicDigitHeight
+
+            guard totalIntrinsicWidthForDigits > 0, totalIntrinsicHeightForDigits > 0 else {
+                return 0.7 
+            }
+
+            let scaleBasedOnWidth = effectiveWidth / totalIntrinsicWidthForDigits
+            let scaleBasedOnHeight = effectiveHeight / totalIntrinsicHeightForDigits
+            
+            return min(scaleBasedOnWidth, scaleBasedOnHeight)
+        }()
+
+        GeometryReader { geometryProxy in 
+            HStack(spacing: digitSpacing * calculatedScale) { 
                 let digits = midiManager.sevenSegmentDigits
                 let d1 = digits.count > 0 ? digits[0] : 0
                 let d2 = digits.count > 1 ? digits[1] : 0
                 let d3 = digits.count > 2 ? digits[2] : 0
                 let d4 = digits.count > 3 ? digits[3] : 0
 
-                // Dots mapping: app.js `(dots & (1 << d)) != 0`
-                // Assuming d=0 is the rightmost digit in app.js, and d=3 is leftmost.
-                // In our array, index 0 is leftmost, index 3 is rightmost.
-                // So, dot for digits[0] (d1) would be (dots & (1 << 3)) or (dots & 0x08)
-                // dot for digits[1] (d2) would be (dots & (1 << 2)) or (dots & 0x04)
-                // dot for digits[2] (d3) would be (dots & (1 << 1)) or (dots & 0x02)
-                // dot for digits[3] (d4) would be (dots & (1 << 0)) or (dots & 0x01)
-                // This needs to be confirmed against how Deluge sends dot data.
-                // The app.js `draw7Seg(data.subarray(7,11), data[6])` passes `data[6]` as `dots`.
-                // `for (let d = 0; d < 4; d++) { let dot = (dots & (1 << d)) != 0; }`
-                // If `d=0` in JS corresponds to `digits[0]` (leftmost), then bit 0 is for leftmost.
+                let dot1Active = (midiManager.sevenSegmentDots & (1 << 0)) != 0 
+                let dot2Active = (midiManager.sevenSegmentDots & (1 << 1)) != 0 
+                let dot3Active = (midiManager.sevenSegmentDots & (1 << 2)) != 0 
+                let dot4Active = (midiManager.sevenSegmentDots & (1 << 3)) != 0
 
-                // Let's assume for now that bit 0 of `sevenSegmentDots` corresponds to `digits[0]` (leftmost),
-                // bit 1 to `digits[1]`, etc. This is often how it's done.
-                // If it's reversed (bit 0 for rightmost), the masks will need to be swapped.
-
-                // Dots mapping (assuming bit 0 for leftmost digit)
-                let dot1Active = (midiManager.sevenSegmentDots & (1 << 0)) != 0 // For digits[0]
-                let dot2Active = (midiManager.sevenSegmentDots & (1 << 1)) != 0 // For digits[1]
-                let dot3Active = (midiManager.sevenSegmentDots & (1 << 2)) != 0 // For digits[2]
-                let dot4Active = (midiManager.sevenSegmentDots & (1 << 3)) != 0 // For digits[3]
-
-                SevenSegmentDigitView(digitPattern: d1, dotActive: dot1Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: displayScale)
-                SevenSegmentDigitView(digitPattern: d2, dotActive: dot2Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: displayScale)
-                SevenSegmentDigitView(digitPattern: d3, dotActive: dot3Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: displayScale)
-                SevenSegmentDigitView(digitPattern: d4, dotActive: dot4Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: displayScale)
+                SevenSegmentDigitView(digitPattern: d1, dotActive: dot1Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: calculatedScale)
+                SevenSegmentDigitView(digitPattern: d2, dotActive: dot2Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: calculatedScale)
+                SevenSegmentDigitView(digitPattern: d3, dotActive: dot3Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: calculatedScale)
+                SevenSegmentDigitView(digitPattern: d4, dotActive: dot4Active, activeColor: activeColor, inactiveColor: inactiveColor, scale: calculatedScale)
             }
-            .position(x: geometry.size.width / 2, y: geometry.size.height / 2) // Position in center
-            // We might also need to ensure the HStack of digits itself doesn't take up full width
-            // if the spacers were removed from inside it.
-            // The previous version had an outer HStack with Spacers. Let's reinstate that idea
-            // but within the GeometryReader's context.
+            .frame(width: geometryProxy.size.width, height: geometryProxy.size.height) 
         }
-        // The .padding(), .background(), .cornerRadius() should apply to the GeometryReader's frame.
         .padding() 
         .background(Color.black) 
         .cornerRadius(10)
-        // .border(Color.blue) // For debugging the bounds of GeometryReader
     }
 }
 
@@ -82,38 +78,32 @@ struct SevenSegmentDisplayView_Previews: PreviewProvider {
         let manager = MIDIManager()
         manager.sevenSegmentDigits = digits
         manager.sevenSegmentDots = dots
-        manager.displayMode = .sevenSegment // Important for context
+        manager.displayMode = .sevenSegment
         manager.displayColorMode = mode
-        manager.isConnected = true // Simulate connection for preview
+        manager.isConnected = true
         return manager
     }
 
     static var previews: some View {
         VStack {
             Text("7-Segment Preview (Normal)")
-            SevenSegmentDisplayView()
+            SevenSegmentDisplayView(availableSize: CGSize(width: 400, height: 150))
                 .environmentObject(getPreviewMIDIManager(digits: [
-                    0b01111110, // 0
-                    0b00110000, // 1
-                    0b01101101, // 2
-                    0b01111001  // 3
-                ], dots: 0b0101)) // Dots for 2nd and 4th digit (from left)
-                .frame(width: 400, height: 150) // Provide a frame for preview
+                    0b01111110, 0b00110000, 0b01101101, 0b01111001 
+                ], dots: 0b0101))
+                .frame(width: 400, height: 150)
 
             Text("7-Segment Preview (Inverted)")
-            SevenSegmentDisplayView()
+            SevenSegmentDisplayView(availableSize: CGSize(width: 300, height: 100))
                 .environmentObject(getPreviewMIDIManager(digits: [
-                    0b00110011, // 4
-                    0b01011011, // 5
-                    0b01011111, // 6
-                    0b01110000  // 7
-                ], dots: 0b1010, mode: .inverted)) // Dots for 1st and 3rd
-                .frame(width: 400, height: 150) // Provide a frame for preview
+                    0b00110011, 0b01011011, 0b01011111, 0b01110000  
+                ], dots: 0b1010, mode: .inverted))
+                .frame(width: 300, height: 100)
             
-            Text("Live Data Preview (Connect Deluge & set to 7-Seg)")
-            SevenSegmentDisplayView()
-                .environmentObject(MIDIManager()) // For live testing if Deluge is connected
-                .frame(width: 400, height: 150) // Provide a frame for preview
+            Text("Live Data Preview (Placeholder - Use App)")
+            SevenSegmentDisplayView(availableSize: CGSize(width: 350, height: 120))
+                .environmentObject(MIDIManager())
+                .frame(width: 350, height: 120)
         }
         .padding()
     }

@@ -283,10 +283,12 @@ struct DelugeScreenView: View {
             .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
             .edgesIgnoringSafeArea(.all)
         } else { // Assumed .sevenSegment
-            SevenSegmentDisplayView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .background(Color.black)
-                .edgesIgnoringSafeArea(.all)
+            GeometryReader { geometry in
+                SevenSegmentDisplayView(availableSize: geometry.size)
+                    .background(Color.black)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .edgesIgnoringSafeArea(.all)
         }
     }
 }
