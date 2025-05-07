@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 struct DelugeDisplayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var midiManager = MIDIManager()
-    @State private var displayMode: DelugeDisplayMode = .oled
+    // @State private var displayMode: DelugeDisplayMode = .oled
 
     init() {
         NSWindow.allowsAutomaticWindowTabbing = false
@@ -42,14 +42,14 @@ struct DelugeDisplayApp: App {
     private var displayModeMenu: some View {
         Group {
             Toggle("Show OLED", isOn: Binding(
-                get: { displayMode == .oled },
-                set: { if $0 { displayMode = .oled } }
+                get: { midiManager.displayMode == .oled },
+                set: { if $0 { midiManager.displayMode = .oled } }
             ))
             .keyboardShortcut("1", modifiers: .command)
             
             Toggle("Show 7SEG", isOn: Binding(
-                get: { displayMode == .sevenSegment },
-                set: { if $0 { displayMode = .sevenSegment } }
+                get: { midiManager.displayMode == .sevenSegment },
+                set: { if $0 { midiManager.displayMode = .sevenSegment } }
             ))
             .keyboardShortcut("2", modifiers: .command)
         }
@@ -100,6 +100,7 @@ struct DelugeDisplayApp: App {
                 Text("Low").tag(Image.Interpolation.low)
                 Text("Medium").tag(Image.Interpolation.medium)
                 Text("High").tag(Image.Interpolation.high)
+                Text("None").tag(Image.Interpolation.none)
             }
             .disabled(!midiManager.smoothingEnabled)
         }
@@ -113,7 +114,7 @@ struct DelugeDisplayApp: App {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 192, height: 96)
+        .defaultSize(width: 384, height: 192)
         .windowStyle(.automatic)
         .windowToolbarStyle(.unified)
         .defaultPosition(.center)
@@ -121,10 +122,7 @@ struct DelugeDisplayApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Save Screenshot...") {
                     if midiManager.isConnected {
-                        DelugeScreenView.saveScreenshotFromCurrentDisplay(
-                            frameBuffer: midiManager.frameBuffer,
-                            colorMode: midiManager.displayColorMode
-                        )
+                        DelugeScreenView.saveScreenshotFromCurrentDisplay(midiManager: midiManager)
                     }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
@@ -152,6 +150,15 @@ struct DelugeDisplayApp: App {
             }
             
             CommandGroup(replacing: .saveItem) { }
+            CommandMenu("View") {
+                 displayModeMenu
+                 Divider()
+                 displayColorMenu
+                 Divider()
+                 zoomControls
+                 Divider()
+                 smoothingControls
+            }
         }
     }
 }

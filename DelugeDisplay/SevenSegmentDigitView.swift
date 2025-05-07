@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 struct SevenSegmentDigitView: View {
@@ -103,53 +102,44 @@ struct SevenSegmentDigitView: View {
         let h = digitDrawingHeight
         let st = strokeThickness
         
-        // Adjustments from app.js (out_adj, in_adj) are effectively built into path points
-        // For simplicity, we'll define paths based on standard segment layouts.
-        // Coordinates are relative to a 0,0 top-left origin for the segment's bounding box.
-        // The ZStack will center them.
-
-        // Canonical points for segments in a typical 7-segment display
-        // Assuming a coordinate system where (0,0) is top-left of the drawing area for the digit
         let topY = -h/2 + st/2
         let midY = CGFloat(0)
         let botY = h/2 - st/2
         
         let leftX = -w/2 + st/2
-        let midX = CGFloat(0) // for vertical segments centered horizontally
         let rightX = w/2 - st/2
 
-        let segmentLengthHorizontal = w - st // Length of horizontal part of A, D, G
-        let segmentLengthVertical = h/2 - st // Length of vertical part of B, C, E, F
+        let segmentLengthHorizontal = w - st 
+        let segmentLengthVertical = h/2 - st 
 
         switch segment {
-        case .A: // Top horizontal
+        case .A: 
             path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: topY))
             path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: topY))
-            // Path for a thick line, or use a rounded rectangle
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: topY - st/2, width: segmentLengthHorizontal - st, height: st))
-        case .G: // Middle horizontal
+        case .G: 
             path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: midY))
             path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: midY))
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: midY - st/2, width: segmentLengthHorizontal - st, height: st))
-        case .D: // Bottom horizontal
+        case .D: 
             path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: botY))
             path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: botY))
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: botY - st/2, width: segmentLengthHorizontal - st, height: st))
         
-        case .F: // Top-left vertical
+        case .F: 
             path.move(to: CGPoint(x: leftX, y: topY + st/2))
             path.addLine(to: CGPoint(x: leftX, y: midY - st/2))
             return Path(CGRect(x: leftX - st/2, y: topY + st/2, width: st, height: segmentLengthVertical - st))
-        case .B: // Top-right vertical
+        case .B: 
             path.move(to: CGPoint(x: rightX, y: topY + st/2))
             path.addLine(to: CGPoint(x: rightX, y: midY - st/2))
             return Path(CGRect(x: rightX - st/2, y: topY + st/2, width: st, height: segmentLengthVertical - st))
 
-        case .E: // Bottom-left vertical
+        case .E: 
             path.move(to: CGPoint(x: leftX, y: midY + st/2))
             path.addLine(to: CGPoint(x: leftX, y: botY - st/2))
             return Path(CGRect(x: leftX - st/2, y: midY + st/2, width: st, height: segmentLengthVertical - st))
-        case .C: // Bottom-right vertical
+        case .C: 
             path.move(to: CGPoint(x: rightX, y: midY + st/2))
             path.addLine(to: CGPoint(x: rightX, y: botY - st/2))
             return Path(CGRect(x: rightX - st/2, y: midY + st/2, width: st, height: segmentLengthVertical - st))
