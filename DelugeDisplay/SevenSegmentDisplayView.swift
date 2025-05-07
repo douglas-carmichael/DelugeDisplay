@@ -11,14 +11,21 @@ struct SevenSegmentDisplayView: View {
     private var activeColor: Color {
         switch midiManager.displayColorMode {
         case .normal: return .red
-        case .inverted: return Color(red: 0.2, green: 0, blue: 0)
+        case .inverted: return .black 
         }
     }
 
     private var inactiveColor: Color {
         switch midiManager.displayColorMode {
         case .normal: return Color(red: 0.2, green: 0, blue: 0)
-        case .inverted: return .red
+        case .inverted: return .white
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch midiManager.displayColorMode {
+        case .normal: return .black
+        case .inverted: return .white
         }
     }
 
@@ -77,7 +84,7 @@ struct SevenSegmentDisplayView: View {
             .frame(width: geometryProxy.size.width, height: geometryProxy.size.height)
         }
         .padding()
-        .background(Color.black)
+        .background(backgroundColor)
         .cornerRadius(10)
         .blur(radius: blurRadius)
     }
@@ -102,6 +109,7 @@ struct SevenSegmentDisplayView_Previews: PreviewProvider {
                     0b01111110, 0b00110000, 0b01101101, 0b01111001
                 ], dots: 0b0101))
                 .frame(width: 400, height: 150)
+                .background(Color.gray)
 
             Text("7-Segment Preview (Inverted)")
             SevenSegmentDisplayView(availableSize: CGSize(width: 300, height: 100))
@@ -109,6 +117,7 @@ struct SevenSegmentDisplayView_Previews: PreviewProvider {
                     0b00110011, 0b01011011, 0b01011111, 0b01110000
                 ], dots: 0b1010, mode: .inverted))
                 .frame(width: 300, height: 100)
+                .background(Color.gray)
             
             Text("Live Data Preview (Placeholder - Use App)")
              SevenSegmentDisplayView(availableSize: CGSize(width: 350, height: 120))
