@@ -63,7 +63,7 @@ struct SevenSegmentDigitView: View {
     }
 
     private func segmentPath(for segment: Segment) -> Path {
-        var path = Path()
+        // var path = Path() 
         let w = digitDrawingWidth
         let h = digitDrawingHeight
         let st = strokeThickness
