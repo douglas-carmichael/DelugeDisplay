@@ -51,28 +51,18 @@ class MIDIManager: ObservableObject {
     @Published var displayMode: DelugeDisplayMode = .oled {
         didSet {
             if oldValue != displayMode {
-                logger.info("Display mode changed to: \(self.displayMode.rawValue)")
-                sendDisplayToggleCommand()
+                if !isSettingInitialMode {
+                    logger.info("Display mode changed by user to: \(self.displayMode.rawValue). Sending toggle and requesting data.")
+                    sendDisplayToggleCommand()
+                    UserDefaults.standard.set(displayMode.rawValue, forKey: "displayMode")
+                } else {
+                     logger.info("Initial display mode programmatically set to: \(self.displayMode.rawValue). Not sending toggle command.")
+                }
                 requestDisplayData()
             }
         }
     }
-    
-    struct MIDIPort: Identifiable {
-        let id: MIDIEndpointRef
-        let name: String
-    }
-    
-    private var lastSelectedPortName: String? {
-        didSet {
-            if let name = lastSelectedPortName {
-                UserDefaults.standard.set(name, forKey: "lastSelectedPort")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "lastSelectedPort")
-            }
-        }
-    }
-    
+    private var isSettingInitialMode: Bool = false
     private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
     private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
     private let expectedFrameSize = 128 * 6
@@ -103,6 +93,22 @@ class MIDIManager: ObservableObject {
     private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
     private let sysExRequestSevenSegment: [UInt8] = [0xf0, 0x7d, 0x02, 0x01, 0x00, 0xf7]
     private let sysExToggleDisplayScreen: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x04, 0xf7]
+    private var lastSelectedPortName: String? {
+        didSet {
+            if let name = lastSelectedPortName {
+                UserDefaults.standard.set(name, forKey: "lastSelectedPort")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "lastSelectedPort")
+            }
+        }
+    }
+    private var probeTimer: Timer?
+    private var hasAttemptedSevenSegmentProbe: Bool = false
+
+    struct MIDIPort: Identifiable {
+        let id: MIDIEndpointRef
+        let name: String
+    }
     
     init() {
         self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
@@ -123,13 +129,16 @@ class MIDIManager: ObservableObject {
             self.displayColorMode = .normal
         }
         self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
+        
         if let savedDisplayMode = UserDefaults.standard.string(forKey: "displayMode"),
            let mode = DelugeDisplayMode(rawValue: savedDisplayMode) {
             self.displayMode = mode
+            logger.info("Loaded initial display mode from UserDefaults: \(mode.rawValue)")
         } else {
             self.displayMode = .oled
+            logger.info("Defaulting initial display mode to OLED (no saved preference).")
         }
-        
+
         setupMIDI()
     }
     
@@ -138,7 +147,7 @@ class MIDIManager: ObservableObject {
     }
     
     func setupMIDI() {
-        var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] notificationPtr in 
+        var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] notificationPtr in
             guard let self = self else { return }
             
             let now = Date()
@@ -281,14 +290,9 @@ class MIDIManager: ObservableObject {
             
             let status = MIDIPortConnectSource(inputPort, input, nil)
             if status == noErr {
-                logger.info("Successfully connected MIDI source for port: \(portName)")
-                startUpdateTimer()
-                
-                logger.info("Requesting initial display data for mode: \(self.displayMode.rawValue)")
-                if displayMode == .oled {
-                    sendDisplayToggleCommand()
-                }
-                requestDisplayData()
+                logger.info("Successfully connected MIDI source for port: \(portName). Starting display mode probe.")
+                updateTimer?.invalidate()
+                startDisplayModeProbe()
             } else {
                 logger.error("Failed to connect MIDI source for port \(portName). Error: \(status)")
                 delugeInput = nil
@@ -296,6 +300,213 @@ class MIDIManager: ObservableObject {
             }
         } else {
             logger.error("Could not find both input and output endpoints for port: \(portName)")
+        }
+    }
+
+    private func startDisplayModeProbe() {
+        probeTimer?.invalidate()
+        isSettingInitialMode = true
+        hasAttemptedSevenSegmentProbe = false
+
+        logger.info("Probing: Requesting OLED data first.")
+        sendSysEx(sysExRequestOLED)
+
+        probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            guard let self = self, self.isSettingInitialMode, !self.hasAttemptedSevenSegmentProbe else {
+                if !(self?.isSettingInitialMode ?? true) {
+                     self?.logger.debug("Probe timer fired, but probing already completed.")
+                }
+                return
+            }
+            self.logger.info("Probing: OLED timeout. Requesting 7-Segment data.")
+            self.hasAttemptedSevenSegmentProbe = true
+            self.sendSysEx(self.sysExRequestSevenSegment)
+
+            self.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                guard let self = self, self.isSettingInitialMode else {
+                    if !(self?.isSettingInitialMode ?? true) {
+                        self?.logger.debug("Second probe timer fired, but probing already completed.")
+                    }
+                    return
+                }
+                self.logger.info("Probing: 7-Segment timeout. Defaulting mode and completing probe.")
+                self.isSettingInitialMode = false
+                if !self.isConnected {
+                    self.logger.warning("Probe completed. No display data received from Deluge.")
+                }
+                self.startUpdateTimer()
+            }
+        }
+    }
+
+    private func setInitialDisplayMode(_ mode: DelugeDisplayMode) {
+        guard isSettingInitialMode else { return }
+
+        probeTimer?.invalidate()
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            let oldIsSettingFlag = self.isSettingInitialMode
+            self.isSettingInitialMode = true
+            self.displayMode = mode
+            self.isSettingInitialMode = oldIsSettingFlag
+            self.logger.info("Initial display mode auto-detected and set to: \(mode.rawValue)")
+            
+            self.isSettingInitialMode = false
+            self.startUpdateTimer()
+        }
+    }
+
+    private func processSysExMessage(_ bytes: [UInt8]) {
+        guard bytes.count >= 5, bytes[0] == 0xf0, bytes[1] == 0x7d else { return }
+
+        let wasConnected = isConnected
+        var dataReceived = false
+
+        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 {
+            dataReceived = true
+            let oledMessageType = bytes[4]
+            if oledMessageType == 0x01 || oledMessageType == 0x02 {
+                if isSettingInitialMode {
+                    setInitialDisplayMode(.oled)
+                }
+                let oledBody = Array(bytes[6...(bytes.count - 2)])
+                do {
+                    let (unpacked, _) = try unpack7to8RLE(oledBody, maxBytes: self.expectedFrameSize)
+                    guard unpacked.count == self.expectedFrameSize else {
+                        logger.error("Decoded OLED data size mismatch. Expected \(self.expectedFrameSize), got \(unpacked.count)")
+                        return
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.frameBuffer = unpacked
+                        self.isConnected = true
+                    }
+                } catch {
+                    logger.error("OLED frame decode error: \(error.localizedDescription). Data: \(oledBody.map { String(format: "%02X", $0) }.joined(separator: " "))")
+                }
+            }
+        } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 {
+            dataReceived = true
+            if isSettingInitialMode {
+                setInitialDisplayMode(.sevenSegment)
+            }
+            let dots = bytes[6]
+            let digits = [bytes[7], bytes[8], bytes[9], bytes[10]]
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.sevenSegmentDigits = digits
+                self.sevenSegmentDots = dots
+                self.isConnected = true
+            }
+        } else if bytes.count >= 7 && bytes[2] == 0x03 && bytes[3] == 0x40 && bytes.last == 0xf7 {
+            dataReceived = true
+            let msgbuf = bytes[5..<(bytes.count-1)]
+            if let message = String(bytes: msgbuf, encoding: .ascii) {
+                logger.debug("Deluge Debug: \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
+            } else {
+                logger.debug("Deluge Debug (non-ASCII): \(msgbuf.map { String(format: "%02X", $0) }.joined(separator: " "))")
+            }
+            DispatchQueue.main.async { [weak self] in self?.isConnected = true }
+        } else if bytes.count == 4 && bytes[2] == 0x00 && bytes.last == 0xf7 {
+            dataReceived = true
+            logger.info("Received Ping response from Deluge.")
+            DispatchQueue.main.async { [weak self] in self?.isConnected = true }
+        }
+        
+        if dataReceived && !wasConnected && isConnected {
+             DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.logger.info("Data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
+                if self.isWaitingForConnection { self.isWaitingForConnection = false }
+             }
+        }
+        if dataReceived {
+            self.lastPacketTime = Date()
+        }
+    }
+
+    private func startUpdateTimer() {
+        guard !isSettingInitialMode else {
+            logger.debug("Deferring start of update timer until initial display mode probe is complete.")
+            return
+        }
+        updateTimer?.invalidate()
+        logger.debug("Starting regular display update timer for mode: \(self.displayMode.rawValue)")
+        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
+            self?.requestDisplayDataIfNecessary()
+        }
+    }
+    
+    private func requestDisplayDataIfNecessary() {
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            if (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval {
+                self.requestDisplayData()
+            }
+        }
+    }
+    
+    private func requestDisplayData() {
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            switch self.displayMode {
+            case .oled:
+                self.logger.debug("Requesting OLED display data.")
+                self.sendSysEx(self.sysExRequestOLED)
+            case .sevenSegment:
+                self.logger.debug("Requesting 7-segment display data.")
+                self.sendSysEx(self.sysExRequestSevenSegment)
+            }
+        }
+    }
+    
+    private func sendDisplayToggleCommand() {
+        processQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.logger.info("Sending display toggle command to Deluge.")
+            self.sendSysEx(self.sysExToggleDisplayScreen)
+        }
+    }
+    
+    private func sendSysEx(_ data: [UInt8]) {
+        guard let output = delugeOutput else {
+            return
+        }
+        
+        var packetList = MIDIPacketList()
+        let currentPacketPtr = MIDIPacketListInit(&packetList)
+        
+        _ = MIDIPacketListAdd(&packetList,
+                              1024,
+                              currentPacketPtr,
+                              0,
+                              data.count,
+                              data)
+        
+        let sendStatus: OSStatus = MIDISend(outputPort, output, &packetList)
+        
+        if sendStatus != noErr {
+            logger.error("Failed to send SysEx data. MIDISend returned error code: \(sendStatus). Data size: \(data.count), Data: \(data.map { String(format: "%02X", $0) }.prefix(20).joined(separator: " "))...")
+        } else {
+        }
+    }
+    
+    private func clearFrameBuffer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if !self.frameBuffer.isEmpty && self.frameBuffer.count == self.expectedFrameSize {
+                self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+            }
+        }
+    }
+    
+    private func clearSevenSegmentData() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.sevenSegmentDigits = [0, 0, 0, 0]
+            self.sevenSegmentDots = 0
         }
     }
     
@@ -378,6 +589,10 @@ class MIDIManager: ObservableObject {
         isWaitingForConnection = false
         clearFrameBuffer()
         clearSevenSegmentData()
+        probeTimer?.invalidate()
+        probeTimer = nil
+        isSettingInitialMode = false
+        hasAttemptedSevenSegmentProbe = false
     }
     
     private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
@@ -431,164 +646,6 @@ class MIDIManager: ObservableObject {
             if self.isConnected || self.isWaitingForConnection {
                 self.lastPacketTime = Date()
             }
-        }
-    }
-    
-    private func processSysExMessage(_ bytes: [UInt8]) {
-        guard bytes.count >= 5,
-              bytes[0] == 0xf0,
-              bytes[1] == 0x7d else {
-            return
-        }
-        
-        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 {
-            let oledMessageType = bytes[4]
-            let oledBody = Array(bytes[6...(bytes.count - 2)])
-            
-            if oledMessageType == 0x01 {
-                do {
-                    let (unpacked, _) = try unpack7to8RLE(oledBody, maxBytes: expectedFrameSize)
-                    guard unpacked.count == expectedFrameSize else {
-                        logger.error("Decoded OLED data size mismatch. Expected \(self.expectedFrameSize), got \(unpacked.count)")
-                        return
-                    }
-                    
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        if !self.isConnected {
-                            self.logger.info("OLED data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
-                        }
-                        self.isConnected = true
-                        self.isWaitingForConnection = false
-                        self.frameBuffer = unpacked
-                    }
-                } catch {
-                    logger.error("OLED frame decode error: \(error.localizedDescription). Data: \(oledBody.map { String(format: "%02X", $0) }.joined(separator: " "))")
-                }
-            } else if oledMessageType == 0x02 {
-                logger.debug("Received OLED delta frame. Delta updates are not yet implemented.")
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    if !self.isConnected {
-                        self.logger.info("OLED delta data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
-                    }
-                    self.isConnected = true
-                    self.isWaitingForConnection = false
-                }
-            } else {
-                logger.warning("Received unknown OLED message type: \(String(format:"0x%02X", oledMessageType))")
-            }
-        } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 {
-            let dots = bytes[6]
-            let digits = [bytes[7], bytes[8], bytes[9], bytes[10]]
-            
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if !self.isConnected {
-                    self.logger.info("7-Segment data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
-                }
-                self.isConnected = true
-                self.isWaitingForConnection = false
-                self.sevenSegmentDigits = digits
-                self.sevenSegmentDots = dots
-            }
-        } else if bytes.count >= 7 && bytes[2] == 0x03 && bytes[3] == 0x40 && bytes.last == 0xf7 {
-            let msgbuf = bytes[5..<(bytes.count-1)]
-            if let message = String(bytes: msgbuf, encoding: .ascii) {
-                logger.debug("Deluge Debug: \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
-            } else {
-                logger.debug("Deluge Debug (non-ASCII): \(msgbuf.map { String(format: "%02X", $0) }.joined(separator: " "))")
-            }
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if !self.isConnected { self.isConnected = true; self.isWaitingForConnection = false }
-            }
-        } else if bytes.count == 4 && bytes[2] == 0x00 && bytes.last == 0xf7 {
-            logger.info("Received Ping response from Deluge.")
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if !self.isConnected { self.isConnected = true; self.isWaitingForConnection = false }
-            }
-        } else {
-            logger.debug("Received other/unhandled SysEx message (Cmd: \(String(format:"0x%02X", bytes[2])), SubCmd: \(String(format:"0x%02X", bytes[3]))): \(bytes.map { String(format: "%02X", $0) }.joined(separator: " "))")
-        }
-    }
-    
-    private func startUpdateTimer() {
-        updateTimer?.invalidate()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            self?.requestDisplayDataIfNecessary()
-        }
-    }
-    
-    private func requestDisplayDataIfNecessary() {
-        processQueue.async { [weak self] in
-            guard let self = self else { return }
-            if (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval {
-                self.requestDisplayData()
-            }
-        }
-    }
-    
-    private func requestDisplayData() {
-        processQueue.async { [weak self] in
-            guard let self = self else { return }
-            switch self.displayMode {
-            case .oled:
-                self.logger.debug("Requesting OLED display data.")
-                self.sendSysEx(self.sysExRequestOLED)
-            case .sevenSegment:
-                self.logger.debug("Requesting 7-segment display data.")
-                self.sendSysEx(self.sysExRequestSevenSegment)
-            }
-        }
-    }
-    
-    private func sendDisplayToggleCommand() {
-        processQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.logger.info("Sending display toggle command to Deluge.")
-            self.sendSysEx(self.sysExToggleDisplayScreen)
-        }
-    }
-    
-    private func sendSysEx(_ data: [UInt8]) {
-        guard let output = delugeOutput else {
-            return
-        }
-        
-        var packetList = MIDIPacketList()
-        let currentPacketPtr = MIDIPacketListInit(&packetList) 
-        
-        _ = MIDIPacketListAdd(&packetList, 
-                              1024, 
-                              currentPacketPtr, 
-                              0, 
-                              data.count, 
-                              data)
-        
-        let sendStatus: OSStatus = MIDISend(outputPort, output, &packetList)
-        
-        if sendStatus != noErr {
-            logger.error("Failed to send SysEx data. MIDISend returned error code: \(sendStatus). Data size: \(data.count), Data: \(data.map { String(format: "%02X", $0) }.prefix(20).joined(separator: " "))...")
-        } else {
-        }
-    }
-    
-    private func clearFrameBuffer() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if !self.frameBuffer.isEmpty && self.frameBuffer.count == self.expectedFrameSize { 
-                self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
-            }
-        }
-    }
-    
-    private func clearSevenSegmentData() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.sevenSegmentDigits = [0, 0, 0, 0]
-            self.sevenSegmentDots = 0
         }
     }
 }
