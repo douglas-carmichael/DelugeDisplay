@@ -253,8 +253,15 @@ struct DelugeScreenView: View {
         }
     }
     
-    var body: some View {
-        if midiManager.displayMode == .oled {
+    private struct OLEDViewContent: View {
+        @EnvironmentObject var midiManager: MIDIManager
+        let screenWidth: Int
+        let screenHeight: Int
+        let blocksHigh: Int
+        let minimumScale: CGFloat
+        var parent: DelugeScreenView
+
+        var body: some View {
             GeometryReader { geometry in
                 let availableAspect = geometry.size.width / geometry.size.height
                 let imageAspect = CGFloat(screenWidth) / CGFloat(screenHeight)
@@ -275,71 +282,62 @@ struct DelugeScreenView: View {
                 let effectiveOledScale = screenWidth > 0 ? drawWidth / CGFloat(screenWidth) : 1.0
 
                 let oledBlurRadius: CGFloat = {
-                    if !midiManager.smoothingEnabled {
-                        return 0
-                    }
-                    let baseLow: CGFloat = 0.1
-                    let baseMedium: CGFloat = 0.3
-                    let baseHigh: CGFloat = 0.6
-                    
+                    if !midiManager.smoothingEnabled { return 0 }
+                    let baseLow: CGFloat = 0.1, baseMedium: CGFloat = 0.3, baseHigh: CGFloat = 0.6
                     var tempRadius: CGFloat = 0
                     switch midiManager.smoothingQuality {
                     case .low: tempRadius = baseLow
                     case .medium: tempRadius = baseMedium
                     case .high: tempRadius = baseHigh
-                    case .none: tempRadius = 0
-                    @unknown default: tempRadius = baseMedium
+                    default: tempRadius = baseMedium
                     }
                     return tempRadius * effectiveOledScale
                 }()
 
                 Canvas { context, size in
                     guard !midiManager.frameBuffer.isEmpty, midiManager.frameBuffer.count == screenWidth * blocksHigh else {
-                        context.fill(
-                            Path(CGRect(origin: .zero, size: size)),
-                            with: .color(midiManager.displayColorMode == .normal ? .black : .white)
-                        )
+                        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(midiManager.displayColorMode == .normal ? .black : .white))
                         return
                     }
-                    if let cgImage = createImage(width: screenWidth, height: screenHeight) {
-                        let interpolationMode: Image.Interpolation = .none
-                        
-                        let resolvedImage = Image(cgImage, scale: 1.0, label: Text("OLED Display"))
-                            .interpolation(interpolationMode) // APPLY the interpolation modeEd
-                        
-                        context.fill(
-                            Path(CGRect(origin: .zero, size: size)),
-                            with: .color(midiManager.displayColorMode == .normal ? .black : .white)
-                        )
-                        
-                        context.draw(resolvedImage, in: CGRect(origin: .zero, size: size))
+                    if let cgImage = parent.createImage(width: screenWidth, height: screenHeight) {
+                        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(midiManager.displayColorMode == .normal ? .black : .white))
+                        context.draw(Image(cgImage, scale: 1.0, label: Text("OLED Display")).interpolation(.none), in: CGRect(origin: .zero, size: size))
                     } else {
-                         context.fill(
-                            Path(CGRect(origin: .zero, size: size)),
-                            with: .color(.gray)
-                        )
-                        logger.error("Failed to create CGImage for OLED display in Canvas.")
+                         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.gray))
+                         // parent.logger.error(...) // logger is also on parent
                     }
                 }
                 .blur(radius: oledBlurRadius)
                 .frame(width: drawWidth, height: drawHeight)
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
-            .frame(
-                idealWidth: CGFloat(screenWidth) * minimumScale,
-                idealHeight: CGFloat(screenHeight) * minimumScale
-            )
+            .frame(idealWidth: CGFloat(screenWidth) * minimumScale, idealHeight: CGFloat(screenHeight) * minimumScale)
             .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
             .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
             .edgesIgnoringSafeArea(.all)
+        }
+    }
+    
+    private struct SevenSegmentViewContent: View {
+        @EnvironmentObject var midiManager: MIDIManager 
 
-        } else {
+        var body: some View {
             GeometryReader { geometry in
                 SevenSegmentDisplayView(availableSize: geometry.size)
-                    .background(Color.black)
+                    .background(Color.black) 
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .edgesIgnoringSafeArea(.all)
+        }
+    }
+    
+    @ViewBuilder
+    var body: some View {
+        switch midiManager.displayMode {
+        case .oled:
+            OLEDViewContent(screenWidth: screenWidth, screenHeight: screenHeight, blocksHigh: blocksHigh, minimumScale: minimumScale, parent: self)
+        case .sevenSegment:
+            SevenSegmentViewContent()
         }
     }
 }
