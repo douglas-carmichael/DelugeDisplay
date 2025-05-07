@@ -152,35 +152,54 @@ struct DelugeScreenView: View {
     }
     
     static func saveScreenshotFromCurrentDisplay(midiManager: MIDIManager) {
-        guard midiManager.displayMode == .oled else {
-            let staticLogger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView.Static")
-            staticLogger.info("Screenshot for 7-segment display not implemented yet.")
+        let localLogger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView.StaticSave")
+        var image: CGImage? = nil
+        var filenamePrefix = "DelugeDisplay"
+
+        if midiManager.displayMode == .oled {
+            let localScreenWidth = 128
+            let localScreenHeight = 48
+            let localBlocksHigh = 6
+            
+            image = createCGImageForScreenshot(
+                frameBuffer: midiManager.frameBuffer,
+                colorMode: midiManager.displayColorMode,
+                screenWidth: localScreenWidth,
+                screenHeight: localScreenHeight,
+                blocksHigh: localBlocksHigh,
+                scale: 4, // Scale for OLED screenshot
+                logger: localLogger
+            )
+            filenamePrefix = "DelugeDisplay_OLED"
+            
+        } else if midiManager.displayMode == .sevenSegment {
+            localLogger.info("Attempting to save screenshot for 7-Segment display.")
+            
+            let screenshotSize = CGSize(width: 400, height: 150)
+            
+            let sevenSegmentView = SevenSegmentDisplayView(availableSize: screenshotSize)
+                .environmentObject(midiManager)
+                .frame(width: screenshotSize.width, height: screenshotSize.height)
+            let renderer = ImageRenderer(content: sevenSegmentView)
+            renderer.scale = 2.0
+            
+            image = renderer.cgImage
+            filenamePrefix = "DelugeDisplay_7Segment"
+
+        } else {
+            localLogger.warning("Screenshot not supported for current display mode: \(midiManager.displayMode.rawValue)")
             return
         }
 
-        let localScreenWidth = 128
-        let localScreenHeight = 48
-        let localBlocksHigh = 6
-        let localLogger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView.StaticSave")
-
-
-        guard let image = createCGImageForScreenshot(
-            frameBuffer: midiManager.frameBuffer,
-            colorMode: midiManager.displayColorMode,
-            screenWidth: localScreenWidth,
-            screenHeight: localScreenHeight,
-            blocksHigh: localBlocksHigh,
-            scale: 4,
-            logger: localLogger
-        ) else {
-            localLogger.error("Failed to create image for screenshot")
+        guard let finalImage = image else {
+            localLogger.error("Failed to create image for screenshot for mode: \(midiManager.displayMode.rawValue)")
             return
         }
         
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let timestamp = dateFormatter.string(from: Date())
-        let filename = "DelugeDisplay_OLED_\(timestamp).png"
+        let filename = "\(filenamePrefix)_\(timestamp).png"
         
         let savePanel = NSSavePanel()
         savePanel.nameFieldStringValue = filename
@@ -194,7 +213,7 @@ struct DelugeScreenView: View {
                     return
                 }
                 let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
-                CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+                CGImageDestinationAddImage(destination, finalImage, properties as CFDictionary)
                 if !CGImageDestinationFinalize(destination) {
                     localLogger.error("Failed to save screenshot")
                 }
@@ -243,7 +262,7 @@ struct DelugeScreenView: View {
                 let (drawWidth, drawHeight): (CGFloat, CGFloat) = {
                     var calculatedWidth: CGFloat
                     var calculatedHeight: CGFloat
-                    if availableAspect > imageAspect { // availableAspect and imageAspect are captured from the outer scope
+                    if availableAspect > imageAspect {
                         calculatedHeight = geometry.size.height
                         calculatedWidth = calculatedHeight * imageAspect
                     } else {
@@ -259,9 +278,9 @@ struct DelugeScreenView: View {
                     if !midiManager.smoothingEnabled {
                         return 0
                     }
-                    let baseLow: CGFloat = 0.1    // Was 0.25
-                    let baseMedium: CGFloat = 0.3 // Was 0.6
-                    let baseHigh: CGFloat = 0.6   // Was 0.9
+                    let baseLow: CGFloat = 0.1
+                    let baseMedium: CGFloat = 0.3
+                    let baseHigh: CGFloat = 0.6
                     
                     var tempRadius: CGFloat = 0
                     switch midiManager.smoothingQuality {
@@ -283,7 +302,6 @@ struct DelugeScreenView: View {
                         return
                     }
                     if let cgImage = createImage(width: screenWidth, height: screenHeight) {
-                        // The .blur() modifier will then handle all smoothing.
                         let interpolationMode: Image.Interpolation = .none
                         
                         let resolvedImage = Image(cgImage, scale: 1.0, label: Text("OLED Display"))
