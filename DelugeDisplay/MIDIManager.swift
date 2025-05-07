@@ -239,7 +239,7 @@ class MIDIManager: ObservableObject {
                 let now = Date()
                 if now.timeIntervalSince(self.lastScanTime) >= self.minimumScanInterval {
                     self.logger.info("MIDI system changed - rescanning ports. Notification: \(notificationPtr.pointee.messageID.rawValue)")
-                    await self.scanAvailablePorts()
+                    self.scanAvailablePorts()
                     self.lastScanTime = now
                     
                     if let selectedPortName = self.lastSelectedPortName, self.delugeInput == nil || self.delugeOutput == nil {
@@ -401,23 +401,27 @@ class MIDIManager: ObservableObject {
         sendSysEx(sysExRequestOLED)
 
         probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet, !self.hasAttemptedSevenSegmentProbe else {
-                self.logger.debug("Probe timer (OLED) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
-                return
-            }
-            self.logger.info("Probing: OLED timeout. Requesting 7-Segment data.")
-            self.hasAttemptedSevenSegmentProbe = true
-            self.sendSysEx(self.sysExRequestSevenSegment)
-
-            self.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-                 guard let self = self else { return }
-                guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet else {
-                    self.logger.debug("Probe timer (7-Seg) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet, !self.hasAttemptedSevenSegmentProbe else {
+                    self.logger.debug("Probe timer (OLED) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
                     return
                 }
-                self.logger.info("Probing: 7-Segment timeout. Defaulting mode and completing probe.")
-                self.setInitialDisplayMode(self.displayMode)
+                self.logger.info("Probing: OLED timeout. Requesting 7-Segment data.")
+                self.hasAttemptedSevenSegmentProbe = true
+                self.sendSysEx(self.sysExRequestSevenSegment)
+
+                self.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet else {
+                            self.logger.debug("Probe timer (7-Seg) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
+                            return
+                        }
+                        self.logger.info("Probing: 7-Segment timeout. Defaulting mode and completing probe.")
+                        self.setInitialDisplayMode(self.displayMode)
+                    }
+                }
             }
         }
     }
@@ -462,38 +466,49 @@ class MIDIManager: ObservableObject {
         updateTimer?.invalidate()
         logger.debug("Starting regular display update timer for mode: \(self.displayMode.rawValue)")
         updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            self?.requestDisplayDataIfNecessary()
+            Task { @MainActor [weak self] in
+                self?.requestDisplayDataIfNecessary()
+            }
         }
     }
 
     private func requestDisplayDataIfNecessary() {
-        processQueue.async { [weak self] in
-            guard let self = self else { return }
-            if (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval {
-                self.requestDisplayData()
-            }
+        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval
+        
+        if shouldRequest {
+            self.requestDisplayData()
         }
     }
     
     private func requestDisplayData() {
+        let currentDisplayMode = self.displayMode
+        let currentSysExRequestOLED = self.sysExRequestOLED
+        let currentSysExRequestSevenSegment = self.sysExRequestSevenSegment
+        
         processQueue.async { [weak self] in
-            guard let self = self else { return }
-            switch self.displayMode {
-            case .oled:
-                self.logger.debug("Requesting OLED display data.")
-                self.sendSysEx(self.sysExRequestOLED)
-            case .sevenSegment:
-                self.logger.debug("Requesting 7-segment display data.")
-                self.sendSysEx(self.sysExRequestSevenSegment)
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                switch currentDisplayMode {
+                case .oled:
+                    self.logger.debug("Requesting OLED display data.")
+                    self.sendSysEx(currentSysExRequestOLED)
+                case .sevenSegment:
+                    self.logger.debug("Requesting 7-segment display data.")
+                    self.sendSysEx(currentSysExRequestSevenSegment)
+                }
             }
         }
     }
     
     private func sendDisplayToggleCommand() {
+        let command = self.sysExToggleDisplayScreen
+        
         processQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.logger.info("Sending display toggle command to Deluge.")
-            self.sendSysEx(self.sysExToggleDisplayScreen)
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.logger.info("Sending display toggle command to Deluge.")
+                self.sendSysEx(command)
+            }
         }
     }
     
@@ -540,114 +555,89 @@ class MIDIManager: ObservableObject {
         logger.debug("Starting connection timer.")
         isWaitingForConnection = true
         connectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
             
-            if self.isConnected {
-                if self.isWaitingForConnection {
-                    self.logger.info("Connection established. Stopping explicit connection attempts by timer.")
-                    self.isWaitingForConnection = false
+                if self.isConnected {
+                    if self.isWaitingForConnection {
+                        self.logger.info("Connection established. Stopping explicit connection attempts by timer.")
+                        self.isWaitingForConnection = false
+                    }
+                    return
                 }
-                return
-            }
             
-            if !self.isWaitingForConnection {
-                self.isWaitingForConnection = true
-            }
+                if !self.isWaitingForConnection {
+                    self.isWaitingForConnection = true
+                }
             
-            guard let portNameToConnect = self.selectedPort?.name ?? self.lastSelectedPortName else {
-                return
-            }
+                guard let portNameToConnect = self.selectedPort?.name ?? self.lastSelectedPortName else {
+                    return
+                }
             
-            self.logger.info("Connection timer fired. Attempting to connect/reconnect to: \(portNameToConnect)")
+                self.logger.info("Connection timer fired. Attempting to connect/reconnect to: \(portNameToConnect)")
             
-            if self.delugeInput == nil || self.delugeOutput == nil {
-                self.logger.debug("Connection timer: Endpoints not set for \(portNameToConnect). Calling connectToDeluge.")
-                self.connectToDeluge(portName: portNameToConnect)
-            } else {
-                self.logger.debug("Connection timer: Endpoints set for \(portNameToConnect), but not connected. Requesting display data.")
-                self.requestDisplayData()
+                if self.delugeInput == nil || self.delugeOutput == nil {
+                    self.logger.debug("Connection timer: Endpoints not set for \(portNameToConnect). Calling connectToDeluge.")
+                    self.connectToDeluge(portName: portNameToConnect)
+                } else {
+                    self.logger.debug("Connection timer: Endpoints set for \(portNameToConnect), but not connected. Requesting display data.")
+                    self.requestDisplayData()
+                }
             }
         }
     }
     
-    func disconnect() {
-        let portNameToLog = self.lastSelectedPortName ?? "unknown"
-        if self.isConnected {
-            logger.info("Disconnecting from Deluge on port: \(portNameToLog)")
-        } else {
-            logger.info("Ensuring MIDI resources are released for port: \(portNameToLog)")
-        }
-        
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        updateTimer?.invalidate()
-        updateTimer = nil
-        probeTimer?.invalidate()
-        probeTimer = nil
-        
-        if let currentInput = self.delugeInput, self.inputPort != 0 {
-            MIDIPortDisconnectSource(self.inputPort, currentInput)
-            logger.debug("Disconnected source for port \(portNameToLog).")
-        }
-        
-        if self.inputPort != 0 {
-            MIDIPortDispose(self.inputPort)
-            self.inputPort = 0
-            logger.debug("Disposed input port.")
-        }
-        if self.outputPort != 0 {
-            MIDIPortDispose(self.outputPort)
-            self.outputPort = 0
-            logger.debug("Disposed output port.")
-        }
-        if self.client != 0 {
-            self.client = 0
-            logger.debug("Nullified MIDI client reference. Consider proper disposal if needed.")
-        }
-        
-        self.delugeInput = nil
-        self.delugeOutput = nil
-        
-        self.isConnected = false
-        self.isWaitingForConnection = false
-        clearFrameBuffer()
-        clearSevenSegmentData()
-        
-        self.isSettingInitialMode = false
-        self.hasAttemptedSevenSegmentProbe = false
-        self.initialProbeCompletedOrModeSet = false
-    }
-
     private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
-        var mutablePacketList = packetList
-        var p: UnsafeMutablePointer<MIDIPacket> = UnsafeMutableRawPointer(&mutablePacketList.packet).assumingMemoryBound(to: MIDIPacket.self)
+        var listCopy = packetList // Work with a mutable copy
 
-        for _ in 0 ..< mutablePacketList.numPackets {
-            let packet = p.pointee
+        guard listCopy.numPackets > 0 else {
+            return
+        }
+
+        // Wrap pointer usage in `withUnsafePointer` to avoid dangling pointer warning
+        withUnsafePointer(to: &listCopy.packet) { firstPacketPointer in
+            // firstPacketPointer is UnsafePointer<MIDIPacket>, valid within this scope.
+            var pCurrentPacket: UnsafePointer<MIDIPacket> = firstPacketPointer
+
+            for i in 0 ..< Int(listCopy.numPackets) { // Use listCopy.numPackets
+                let packet = pCurrentPacket.pointee
             
-            let length = Int(packet.length)
-            guard length > 0, length <= self.maxSysExSize else {
-                Task {
-                    await MainActor.run {
-                        self.logger.error("Received MIDI packet with invalid length (\(length)). Flushing buffer.")
-                        self.sysExBuffer.removeAll()
-                        self.isProcessingSysEx = false
+                let length = Int(packet.length)
+                guard length > 0, length <= self.maxSysExSize else {
+                    Task { @MainActor [weak self, length] in
+                        self?.logger.error("Received MIDI packet with invalid length (\(length)). Flushing buffer.")
+                        self?.sysExBuffer.removeAll()
+                        self?.isProcessingSysEx = false
+                    }
+                    if i < Int(listCopy.numPackets) - 1 {
+                        let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
+                        pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
+                    }
+                    continue
+                }
+            
+                var bytesArray = [UInt8](repeating: 0, count: length)
+                withUnsafeBytes(of: packet.data) { rawBufferPtr in
+                    let sourcePtr = rawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    bytesArray.withUnsafeMutableBytes { destRawBufferPtr in
+                        let destPtr = destRawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        destPtr.initialize(from: sourcePtr, count: length)
                     }
                 }
-                p = MIDIPacketNext(p)
-                continue
-            }
             
-            let bytes = withUnsafeBytes(of: packet.data) { (rawBufferPointer: UnsafeRawBufferPointer) -> [UInt8] in
-                let bufferPointer = rawBufferPointer.bindMemory(to: UInt8.self)
-                return Array(bufferPointer.prefix(length))
-            }
+                let capturedBytesArray = bytesArray
+                processQueue.async { [weak self, capturedBytesArray] in
+                    guard let strongSelf = self else { return }
+                    Task { @MainActor in
+                        strongSelf.processSingleMIDIMessageOnBackgroundQueue(capturedBytesArray)
+                    }
+                }
             
-            processQueue.async { [weak self] in
-                self?.processSingleMIDIMessageOnBackgroundQueue(bytes)
+                if i < Int(listCopy.numPackets) - 1 {
+                    let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
+                    pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
+                }
             }
-            
-            p = MIDIPacketNext(p)
         }
     }
 
@@ -714,13 +704,58 @@ class MIDIManager: ObservableObject {
                 setInitialDisplayMode(.sevenSegment)
             }
         }
-        // Potentially other SysEx message types could be handled here
         
         if dataReceived && !wasConnectedInitially && self.isConnected {
              self.logger.info("Data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
              if self.isWaitingForConnection { self.isWaitingForConnection = false }
         }
-        // lastPacketTime update was moved to processSingleMIDIMessageOnBackgroundQueue's Task @MainActor block
     }
 
+    func disconnect() {
+        let portNameToLog = self.lastSelectedPortName ?? "unknown"
+        if self.isConnected {
+            logger.info("Disconnecting from Deluge on port: \(portNameToLog)")
+        } else {
+            logger.info("Ensuring MIDI resources are released for port: \(portNameToLog)")
+        }
+        
+        connectionTimer?.invalidate()
+        connectionTimer = nil
+        updateTimer?.invalidate()
+        updateTimer = nil
+        probeTimer?.invalidate()
+        probeTimer = nil
+        
+        if let currentInput = self.delugeInput, self.inputPort != 0 {
+            MIDIPortDisconnectSource(self.inputPort, currentInput)
+            logger.debug("Disconnected source for port \(portNameToLog).")
+        }
+        
+        if self.inputPort != 0 {
+            MIDIPortDispose(self.inputPort)
+            self.inputPort = 0
+            logger.debug("Disposed input port.")
+        }
+        if self.outputPort != 0 {
+            MIDIPortDispose(self.outputPort)
+            self.outputPort = 0
+            logger.debug("Disposed output port.")
+        }
+        if self.client != 0 {
+            self.client = 0
+            logger.debug("Nullified MIDI client reference. MIDIClientDispose should be called if client was created.")
+        }
+        
+        self.delugeInput = nil
+        self.delugeOutput = nil
+        
+        self.isConnected = false
+        self.isWaitingForConnection = false
+        clearFrameBuffer()
+        clearSevenSegmentData()
+        
+        self.isSettingInitialMode = false
+        self.hasAttemptedSevenSegmentProbe = false
+        self.initialProbeCompletedOrModeSet = false
+    }
 }
