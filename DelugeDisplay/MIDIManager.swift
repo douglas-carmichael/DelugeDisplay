@@ -83,41 +83,40 @@ class MIDIManager: ObservableObject {
             logger.debug("Update timer invalidated due to mode switch from \(oldValue.rawValue) to \(self.displayMode.rawValue).")
 
             // Clear data for the mode we are LEAVING (oldValue)
-            if oldValue == .oled {
+            // This is the key change to prevent the "flash"
+            switch oldValue {
+            case .oled:
                 clearFrameBuffer()
-                logger.debug("Cleared frame buffer as we are leaving OLED mode.")
-            } else if oldValue == .sevenSegment {
+                logger.debug("Cleared frame buffer as we are leaving OLED mode for \(self.displayMode.rawValue).")
+            case .sevenSegment:
                 clearSevenSegmentData()
-                logger.debug("Cleared 7-segment data as we are leaving 7-Segment mode.")
+                logger.debug("Cleared 7-segment data as we are leaving 7-Segment mode for \(self.displayMode.rawValue).")
             }
             
-            // Additionally, ensure the new mode's buffer is also pristine.
-            // This handles cases where the new mode's buffer might have become stale for other reasons,
-            // or if it's the very first switch from an uninitialized state (though init should handle that).
-            // This is a "belt and suspenders" approach.
-            switch self.displayMode {
-            case .oled:
-                // If frameBuffer is not already empty (e.g. if we didn't come from OLED, or just to be sure)
-                // A simple clearFrameBuffer() here is fine.
-                clearFrameBuffer()
-                logger.debug("Ensured frame buffer is clear for newly active OLED mode.")
-            case .sevenSegment:
-                // Similarly, ensure 7-segment data is clear.
-                clearSevenSegmentData()
-                logger.debug("Ensured 7-segment data is clear for newly active 7-Segment mode.")
+            // Ensure the new mode's buffer is also pristine if it wasn't the one just cleared.
+            // This handles direct programmatic sets or edge cases.
+            if self.displayMode == .oled && oldValue != .oled {
+                 clearFrameBuffer() // Ensure it's clean if we weren't just in OLED
+                 logger.debug("Ensured frame buffer is clear for newly active OLED mode (switched from 7-seg).")
+            } else if self.displayMode == .sevenSegment && oldValue != .sevenSegment {
+                 clearSevenSegmentData() // Ensure it's clean if we weren't just in 7-seg
+                 logger.debug("Ensured 7-segment data is clear for newly active 7-Segment mode (switched from OLED).")
             }
 
 
             if !isSettingInitialMode { // User-initiated change
                 logger.info("Display mode changed by user from \(oldValue.rawValue) to \(self.displayMode.rawValue). Sending toggle and requesting new data.")
-                sendDisplayToggleCommand()
+                sendDisplayToggleCommand() // This is correctly placed
                 UserDefaults.standard.set(self.displayMode.rawValue, forKey: "displayMode")
-                requestDisplayData()
-                startUpdateTimer()
+                requestDisplayData() // Request data for the new mode
+                startUpdateTimer() // Restart timer for the new mode
             } else { // Programmatic change during initial setup
-                logger.info("Initial display mode programmatically set from \(oldValue.rawValue) to \(self.displayMode.rawValue) during initial setup. Not sending toggle.")
+                logger.info("Initial display mode programmatically set from \(oldValue.rawValue) to \(self.displayMode.rawValue) during initial setup. Not sending toggle immediately.")
                 UserDefaults.standard.set(self.displayMode.rawValue, forKey: "displayMode")
-                // requestDisplayData() and startUpdateTimer() are handled by the calling context (e.g., setInitialDisplayMode)
+                // For initial setup, requestDisplayData() and startUpdateTimer()
+                // are typically handled by the calling context (e.g., setInitialDisplayMode or connectToDeluge after probing).
+                // However, if probing logic already set the mode, we might not need to call them here again,
+                // as setInitialDisplayMode calls startUpdateTimer.
             }
         }
     }
@@ -488,6 +487,12 @@ class MIDIManager: ObservableObject {
         processQueue.async { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                // Ensure we are connected or trying to connect before sending requests
+                guard self.isConnected || self.isWaitingForConnection || self.isSettingInitialMode else {
+                    self.logger.debug("Skipping data request: Not connected, not waiting for connection, and not in initial mode setting.")
+                    return
+                }
+
                 switch currentDisplayMode {
                 case .oled:
                     self.logger.debug("Requesting OLED display data.")
