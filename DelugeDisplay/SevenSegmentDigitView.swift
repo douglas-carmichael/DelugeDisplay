@@ -5,45 +5,12 @@ struct SevenSegmentDigitView: View {
     let dotActive: Bool
     let activeColor: Color
     let inactiveColor: Color
-    let scale: CGFloat // To allow the parent to control the size
+    let scale: CGFloat 
 
-    // Segment paths (A-G, and Dot)
-    // Segments are typically indexed:
-    //   --A--
-    //  |     |
-    //  F     B
-    //  |     |
-    //   --G--
-    //  |     |
-    //  E     C
-    //  |     |
-    //   --D--   . DP
-
-    // From app.js, mapping seems to be (bit index to segment letter, needs verification):
-    // Bit 0: G (midline)
-    // Bit 1: F (top-left vertical)
-    // Bit 2: E (bottom-left vertical)
-    // Bit 3: D (bottom horizontal)
-    // Bit 4: C (bottom-right vertical)
-    // Bit 5: B (top-right vertical)
-    // Bit 6: A (top horizontal)
-    // This order (G,F,E,D,C,B,A) is a bit unusual but we'll follow what app.js implies.
-
-    // Dimensions from app.js, adapted for SwiftUI and scaling
-    // Original fixed dimensions:
-    // const digit_height = 120 * scale; (overall height for calculations)
-    // const digit_width = 60 * scale;  (overall width for calculations)
-    // const stroke_thick = 9 * scale;
-    // const half_height = digit_height / 2;
-    // const out_adj = 0.5 * scale;
-    // const in_adj = 1.5 * scale;
-    // const dot_size = 6.5 * scale;
-
-    // We'll define canonical dimensions (e.g., for a 60x120 digit box) and scale them.
     private var digitDrawingWidth: CGFloat { 60 * scale }
     private var digitDrawingHeight: CGFloat { 120 * scale }
     private var strokeThickness: CGFloat { 9 * scale }
-    private var dotSize: CGFloat { 7 * scale } // Slightly adjusted from 6.5
+    private var dotSize: CGFloat { 7 * scale } 
 
     var body: some View {
         ZStack {
@@ -80,12 +47,11 @@ struct SevenSegmentDigitView: View {
                 Circle()
                     .fill(activeColor)
                     .frame(width: dotSize, height: dotSize)
-                    // Position dot to the bottom right of the digit area
                     .offset(x: digitDrawingWidth / 2 + dotSize / 2 + (2 * scale), y: digitDrawingHeight / 2 - dotSize / 2)
             }
         }
-        .frame(width: digitDrawingWidth + dotSize + (4*scale), height: digitDrawingHeight) // Ensure frame accommodates dot
-        .drawingGroup() // Improves performance for complex drawings
+        .frame(width: digitDrawingWidth + dotSize + (4*scale), height: digitDrawingHeight) 
+        // .drawingGroup() 
     }
 
     private func isSegmentActive(_ mask: UInt8) -> Bool {
@@ -114,46 +80,29 @@ struct SevenSegmentDigitView: View {
 
         switch segment {
         case .A: 
-            path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: topY))
-            path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: topY))
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: topY - st/2, width: segmentLengthHorizontal - st, height: st))
         case .G: 
-            path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: midY))
-            path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: midY))
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: midY - st/2, width: segmentLengthHorizontal - st, height: st))
         case .D: 
-            path.move(to: CGPoint(x: -segmentLengthHorizontal/2 + st/2, y: botY))
-            path.addLine(to: CGPoint(x: segmentLengthHorizontal/2 - st/2, y: botY))
             return Path(CGRect(x: -segmentLengthHorizontal/2 + st/2, y: botY - st/2, width: segmentLengthHorizontal - st, height: st))
         
         case .F: 
-            path.move(to: CGPoint(x: leftX, y: topY + st/2))
-            path.addLine(to: CGPoint(x: leftX, y: midY - st/2))
             return Path(CGRect(x: leftX - st/2, y: topY + st/2, width: st, height: segmentLengthVertical - st))
         case .B: 
-            path.move(to: CGPoint(x: rightX, y: topY + st/2))
-            path.addLine(to: CGPoint(x: rightX, y: midY - st/2))
             return Path(CGRect(x: rightX - st/2, y: topY + st/2, width: st, height: segmentLengthVertical - st))
 
         case .E: 
-            path.move(to: CGPoint(x: leftX, y: midY + st/2))
-            path.addLine(to: CGPoint(x: leftX, y: botY - st/2))
             return Path(CGRect(x: leftX - st/2, y: midY + st/2, width: st, height: segmentLengthVertical - st))
         case .C: 
-            path.move(to: CGPoint(x: rightX, y: midY + st/2))
-            path.addLine(to: CGPoint(x: rightX, y: botY - st/2))
             return Path(CGRect(x: rightX - st/2, y: midY + st/2, width: st, height: segmentLengthVertical - st))
         }
     }
 }
 
-// Helper struct to draw a segment as a shape from a Path
 struct SegmentShape: Shape {
     let pathDefinition: Path
 
     func path(in rect: CGRect) -> Path {
-        // The pathDefinition is already in its local coordinate space.
-        // We need to offset it to be centered in the rect.
         let offsetX = rect.midX
         let offsetY = rect.midY
         return pathDefinition.applying(CGAffineTransform(translationX: offsetX, y: offsetY))
@@ -163,7 +112,6 @@ struct SegmentShape: Shape {
 struct SevenSegmentDigitView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 20) {
-            // Test all digits 0-9 and some letters
             HStack {
                 SevenSegmentDigitView(digitPattern: 0b01111110, dotActive: false, activeColor: .red, inactiveColor: .gray.opacity(0.2), scale: 0.5) // 0
                 SevenSegmentDigitView(digitPattern: 0b00110000, dotActive: true, activeColor: .red, inactiveColor: .gray.opacity(0.2), scale: 0.5)  // 1

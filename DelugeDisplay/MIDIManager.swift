@@ -74,100 +74,106 @@ class MIDIManager: ObservableObject {
     }
     @Published var displayMode: DelugeDisplayMode = .oled {
         didSet {
-            guard oldValue != self.displayMode else {
-                logger.debug("displayMode.didSet: oldValue (\(oldValue.rawValue)) == newDisplayMode (\(self.displayMode.rawValue)). No change in mode value. isSettingInitialMode=\(self.isSettingInitialMode)")
-                return
-            }
+            guard oldValue != self.displayMode else { return }
 
-            updateTimer?.invalidate()
-            logger.debug("Update timer invalidated due to mode switch from \(oldValue.rawValue) to \(self.displayMode.rawValue).")
+            // Existing code
+            let generation = self.displayLogicGeneration &+ 1
+            self.displayLogicGeneration = generation
+            logger.debug("Display mode changed. New generation: \(generation)")
 
-            // Clear data for the mode we are LEAVING (oldValue)
-            // This is the key change to prevent the "flash"
-            switch oldValue {
-            case .oled:
-                clearFrameBuffer()
-                logger.debug("Cleared frame buffer as we are leaving OLED mode for \(self.displayMode.rawValue).")
-            case .sevenSegment:
+            let previousMode = oldValue
+            let currentMode = self.displayMode
+
+            // Original buffer clearing for the mode we are LEAVING
+            if previousMode == .sevenSegment {
                 clearSevenSegmentData()
-                logger.debug("Cleared 7-segment data as we are leaving 7-Segment mode for \(self.displayMode.rawValue).")
+                logger.debug("Cleared 7-segment data as we are leaving 7-Segment mode for \(currentMode.rawValue).")
+            } else if previousMode == .oled {
+                // For OLED -> 7SEG, we clear frameBuffer immediately.
+                // For 7SEG -> OLED, frameBuffer clearing is handled specially below.
+                if currentMode == .sevenSegment { // Only clear if actually going to 7-seg
+                    clearFrameBuffer()
+                    logger.debug("Cleared frame buffer as we are leaving OLED mode for \(currentMode.rawValue).")
+                }
             }
             
-            // Ensure the new mode's buffer is also pristine if it wasn't the one just cleared.
-            // This handles direct programmatic sets or edge cases.
-            if self.displayMode == .oled && oldValue != .oled {
-                 clearFrameBuffer() // Ensure it's clean if we weren't just in OLED
-                 logger.debug("Ensured frame buffer is clear for newly active OLED mode (switched from 7-seg).")
-            } else if self.displayMode == .sevenSegment && oldValue != .sevenSegment {
-                 clearSevenSegmentData() // Ensure it's clean if we weren't just in 7-seg
-                 logger.debug("Ensured 7-segment data is clear for newly active 7-Segment mode (switched from OLED).")
+            // Ensure destination 7-segment buffer is clear if switching TO it
+            if currentMode == .sevenSegment {
+                 clearSevenSegmentData()
+                 logger.debug("Ensured 7-segment data is clear for newly active 7-Segment mode (switched from \(previousMode.rawValue)).")
             }
 
 
-            if !isSettingInitialMode { // User-initiated change
-                logger.info("Display mode changed by user from \(oldValue.rawValue) to \(self.displayMode.rawValue). Sending toggle and requesting new data.")
-                sendDisplayToggleCommand() // This is correctly placed
-                UserDefaults.standard.set(self.displayMode.rawValue, forKey: "displayMode")
-                requestDisplayData() // Request data for the new mode
-                startUpdateTimer() // Restart timer for the new mode
-            } else { // Programmatic change during initial setup
-                logger.info("Initial display mode programmatically set from \(oldValue.rawValue) to \(self.displayMode.rawValue) during initial setup. Not sending toggle immediately.")
-                UserDefaults.standard.set(self.displayMode.rawValue, forKey: "displayMode")
-                // For initial setup, requestDisplayData() and startUpdateTimer()
-                // are typically handled by the calling context (e.g., setInitialDisplayMode or connectToDeluge after probing).
-                // However, if probing logic already set the mode, we might not need to call them here again,
-                // as setInitialDisplayMode calls startUpdateTimer.
+            if !isSettingInitialMode {
+                logger.info("Display mode changed by user from \(previousMode.rawValue) to \(currentMode.rawValue). Processing. Generation: \(generation)")
+                UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
+                
+                if previousMode == .sevenSegment && currentMode == .oled {
+                    // 1. Tell Deluge to switch its mode IMMEDIATELY
+                    logger.info("7SEG->OLED: Sending toggle command immediately. Gen: \(generation)")
+                    sendDisplayToggleCommand()
+                    
+                    // 2. Delay further actions to allow Deluge to send transitional frame
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.075) { // 75ms delay (tune this)
+                        // Only proceed if mode and generation haven't changed again
+                        if self.displayMode == .oled && self.displayLogicGeneration == generation {
+                            // 3. Clear the app's frameBuffer AFTER the delay (to catch the transitional frame)
+                            self.logger.info("7SEG->OLED: Delayed: Clearing frame buffer. Gen: \(generation)")
+                            self.clearFrameBuffer()
+                            
+                            // 4. Request actual OLED data
+                            self.logger.info("7SEG->OLED: Delayed: Requesting OLED data. Gen: \(generation)")
+                            self.requestDisplayData(forMode: .oled)
+                            
+                            // 5. Start the update timer (if not already started by a different path)
+                            //    Or ensure it's using the correct generation.
+                            self.startUpdateTimer(forExplicitMode: .oled, generation: generation)
+                        } else {
+                            self.logger.info("7SEG->OLED: Delayed action skipped due to mode/gen change. Expected OLED/Gen\(generation), got \(self.displayMode.rawValue)/Gen\(self.displayLogicGeneration)")
+                        }
+                    }
+                    // If the timer starts before the buffer is cleared and data requested,
+                    // it might try to request data too soon.
+                    // Let's ensure the timer is (re)started *after* the clear and first request within the delay block.
+                    // So, we might not call startUpdateTimer here, but inside the asyncAfter.
+                    // For now, the existing startUpdateTimer call below will handle other cases.
+                    // If we don't start it here, OLED view might be blank for the delay duration.
+                    // This is a trade-off. Let's try starting it after the data request.
+                    // The main `startUpdateTimer` outside this if/else will be for other transitions.
+                    // We need a timer for OLED mode that respects the new generation.
+                    // Let's start it here but it won't request until connected & delay passed by its own logic.
+                     startUpdateTimer(forExplicitMode: currentMode, generation: generation)
+
+
+                } else { // For OLED -> 7SEG, or any other non-problematic transitions
+                    if currentMode == .oled && previousMode == .oled { // e.g. port change while in OLED
+                        clearFrameBuffer() // Ensure it's clean
+                        logger.debug("OLED->OLED (e.g. port change): Ensuring frame buffer is clear. Gen: \(generation)")
+                    }
+                    sendDisplayToggleCommand()
+                    requestDisplayData(forMode: currentMode)
+                    startUpdateTimer(forExplicitMode: currentMode, generation: generation)
+                }
+            } else { // isSettingInitialMode == true
+                logger.info("Initial display mode programmatically set from \(previousMode.rawValue) to \(currentMode.rawValue). Gen: \(generation)")
+                UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
+                // Initial probe logic handles requests and timer.
+                // However, if initial mode is set to OLED (e.g. from UserDefaults),
+                // and it was previously 7SEG (hypothetically), this special delay logic wouldn't run.
+                // This might be fine as initial probe is different.
             }
         }
     }
     private var isSettingInitialMode: Bool = false
     private var initialProbeCompletedOrModeSet: Bool = false
-    private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
-    private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
-    private let expectedFrameSize = 128 * 6
-    private let expectedSevenSegmentDataLength = 5
-    private let frameTimeout: TimeInterval = 0.2
-    private let maxDeltaFails = 3
-    private let maxSysExSize = 1024 * 32
-    private let screenWidth = 128
-    private let screenHeight = 48
-    private let bytesPerRow = 128
-    private let numRows = 6
-    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
-    private let delugePortName = ""
-    private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
-    private let updateInterval: TimeInterval = 0.05
-    private var client: MIDIClientRef = 0
-    private var inputPort: MIDIPortRef = 0
-    private var outputPort: MIDIPortRef = 0
-    private var delugeInput: MIDIEndpointRef?
-    private var delugeOutput: MIDIEndpointRef?
-    private var sysExBuffer: [UInt8] = []
-    private var updateTimer: Timer?
-    private var connectionTimer: Timer?
-    private var lastPacketTime = Date()
-    private var isProcessingSysEx = false
-    private var lastScanTime: Date = Date()
-    private let minimumScanInterval: TimeInterval = 1.0
-    private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
-    private let sysExRequestSevenSegment: [UInt8] = [0xf0, 0x7d, 0x02, 0x01, 0x00, 0xf7]
-    private let sysExToggleDisplayScreen: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x04, 0xf7]
-    private var lastSelectedPortName: String? {
-        didSet {
-            if let name = lastSelectedPortName {
-                UserDefaults.standard.set(name, forKey: "lastSelectedPort")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "lastSelectedPort")
-            }
-        }
-    }
-    private var probeTimer: Timer?
-    private var hasAttemptedSevenSegmentProbe: Bool = false
 
     struct MIDIPort: Identifiable {
         let id: MIDIEndpointRef
         let name: String
     }
+    
+    private var updateTimer: Timer?
+    private var displayLogicGeneration: Int = 0
     
     init() {
         self.isSettingInitialMode = false
@@ -436,6 +442,8 @@ class MIDIManager: ObservableObject {
         self.isSettingInitialMode = true
         
         if self.displayMode != mode {
+            self.displayLogicGeneration &+= 1
+            logger.debug("setInitialDisplayMode changing displayMode. New generation: \(self.displayLogicGeneration)")
             self.displayMode = mode
         } else {
             logger.debug("setInitialDisplayMode: Target mode \(mode.rawValue) is already the current mode. Ensuring setup finalizes.")
@@ -445,7 +453,7 @@ class MIDIManager: ObservableObject {
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            guard !self.initialProbeCompletedOrModeSet else {
+            guard !self.initialProbeCompletedOrModeSet else { // Re-check in async block
                 self.logger.debug("setInitialDisplayMode async: Probe already completed or mode set while async task was pending. Exiting for \(mode.rawValue).")
                 return
             }
@@ -453,68 +461,86 @@ class MIDIManager: ObservableObject {
             self.logger.info("Initial display mode definitively set to: \(mode.rawValue) by setInitialDisplayMode.")
             self.initialProbeCompletedOrModeSet = true
             
-            self.startUpdateTimer()
+            self.startUpdateTimer(forExplicitMode: mode, generation: self.displayLogicGeneration)
         }
     }
 
-    private func startUpdateTimer() {
+    private func startUpdateTimer(forExplicitMode modeToUse: DelugeDisplayMode, generation: Int) {
         guard !isSettingInitialMode else {
-            logger.debug("Deferring start of update timer: isSettingInitialMode is still true (or was true when startUpdateTimer was enqueued).")
+            logger.debug("Deferring start of update timer: isSettingInitialMode is still true.")
             return
         }
-        updateTimer?.invalidate()
-        logger.debug("Starting regular display update timer for mode: \(self.displayMode.rawValue)")
-        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.requestDisplayDataIfNecessary()
-            }
-        }
-    }
-
-    private func requestDisplayDataIfNecessary() {
-        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval
         
-        if shouldRequest {
-            self.requestDisplayData()
+        if let existingTimer = self.updateTimer {
+            existingTimer.invalidate()
         }
-    }
-    
-    private func requestDisplayData() {
-        let currentDisplayMode = self.displayMode
-        let currentSysExRequestOLED = self.sysExRequestOLED
-        let currentSysExRequestSevenSegment = self.sysExRequestSevenSegment
+        self.updateTimer = nil
         
-        processQueue.async { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                // Ensure we are connected or trying to connect before sending requests
-                guard self.isConnected || self.isWaitingForConnection || self.isSettingInitialMode else {
-                    self.logger.debug("Skipping data request: Not connected, not waiting for connection, and not in initial mode setting.")
+        let modeForThisTimer = modeToUse
+        // Capture the passed 'generation'
+        let capturedGenerationForTimer = generation
+        logger.debug("Starting regular display update timer for mode: \(modeForThisTimer.rawValue) with interval \(self.updateInterval)s. Generation: \(capturedGenerationForTimer)")
+        
+        let newTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] timerThatFired in
+            // Capture 'capturedGenerationForTimer'
+            Task { @MainActor [weak self, weak timerThatFired, capturedGeneration = capturedGenerationForTimer] in
+                guard let strongSelf = self, let strongTimerThatFired = timerThatFired else {
                     return
                 }
 
-                switch currentDisplayMode {
-                case .oled:
-                    self.logger.debug("Requesting OLED display data.")
-                    self.sendSysEx(currentSysExRequestOLED)
-                case .sevenSegment:
-                    self.logger.debug("Requesting 7-segment display data.")
-                    self.sendSysEx(currentSysExRequestSevenSegment)
+                strongSelf.logger.error("TIMER TASK ENTRY --- CapturedGen: \(capturedGeneration), CurrentGen: \(strongSelf.displayLogicGeneration), CapturedMode: \(modeForThisTimer.rawValue), CurrentMode: \(strongSelf.displayMode.rawValue), TimerValid: \(strongTimerThatFired.isValid)")
+
+                // PRIMARY GUARD: Check generation AND timer identity (belt and suspenders)
+                if strongSelf.displayLogicGeneration == capturedGeneration && strongSelf.updateTimer === strongTimerThatFired && strongTimerThatFired.isValid {
+                    strongSelf.requestDisplayDataIfNecessary(forMode: modeForThisTimer) // modeForThisTimer should be inherently correct if generation matches
+                } else {
+                    var reason = ""
+                    if strongSelf.displayLogicGeneration != capturedGeneration { reason += "GenerationMismatch (Expected:\(strongSelf.displayLogicGeneration),Got:\(capturedGeneration));" }
+                    if strongSelf.updateTimer !== strongTimerThatFired { reason += "NotCurrentTimerInstance;" }
+                    if !strongTimerThatFired.isValid { reason += "TimerInstanceNotValid;" }
+                    strongSelf.logger.notice("Ignored timer callback. Reason: \(reason). Originally for mode: \(modeForThisTimer.rawValue).")
                 }
             }
         }
+        self.updateTimer = newTimer
+    }
+
+    private func requestDisplayDataIfNecessary(forMode mode: DelugeDisplayMode) {
+        guard mode == self.displayMode else {
+            self.logger.debug("Timer fired for mode \(mode.rawValue), but current mode is \(self.displayMode.rawValue). Skipping data request by timer.")
+            return
+        }
+        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval
+        
+        if shouldRequest {
+            self.requestDisplayData(forMode: mode)
+        }
+    }
+    
+    private func requestDisplayData(forMode mode: DelugeDisplayMode) {
+        guard self.isConnected || self.isWaitingForConnection || self.isSettingInitialMode else {
+            self.logger.debug("Skipping data request: Not connected, not waiting for connection, and not in initial mode setting.")
+            return
+        }
+
+        let sysExCommand: [UInt8]
+
+        switch mode {
+        case .oled:
+            self.logger.debug("Requesting OLED display data (for explicitly passed mode).")
+            sysExCommand = self.sysExRequestOLED
+        case .sevenSegment:
+            self.logger.debug("Requesting 7-segment display data (for explicitly passed mode).")
+            sysExCommand = self.sysExRequestSevenSegment
+        }
+        self.sendSysEx(sysExCommand)
     }
     
     private func sendDisplayToggleCommand() {
         let command = self.sysExToggleDisplayScreen
         
-        processQueue.async { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.logger.info("Sending display toggle command to Deluge.")
-                self.sendSysEx(command)
-            }
-        }
+        self.logger.info("Sending display toggle command to Deluge.")
+        self.sendSysEx(command)
     }
     
     private func sendSysEx(_ data: [UInt8]) {
@@ -585,8 +611,8 @@ class MIDIManager: ObservableObject {
                     self.logger.debug("Connection timer: Endpoints not set for \(portNameToConnect). Calling connectToDeluge.")
                     self.connectToDeluge(portName: portNameToConnect)
                 } else {
-                    self.logger.debug("Connection timer: Endpoints set for \(portNameToConnect), but not connected. Requesting display data.")
-                    self.requestDisplayData()
+                    self.logger.debug("Connection timer: Endpoints set for \(portNameToConnect), but not connected. Requesting display data for current mode: \(self.displayMode.rawValue).")
+                    self.requestDisplayData(forMode: self.displayMode)
                 }
             }
         }
@@ -599,12 +625,10 @@ class MIDIManager: ObservableObject {
             return
         }
 
-        // Wrap pointer usage in `withUnsafePointer` to avoid dangling pointer warning
         withUnsafePointer(to: &listCopy.packet) { firstPacketPointer in
-            // firstPacketPointer is UnsafePointer<MIDIPacket>, valid within this scope.
             var pCurrentPacket: UnsafePointer<MIDIPacket> = firstPacketPointer
 
-            for i in 0 ..< Int(listCopy.numPackets) { // Use listCopy.numPackets
+            for i in 0 ..< Int(listCopy.numPackets) {
                 let packet = pCurrentPacket.pointee
             
                 let length = Int(packet.length)
@@ -632,9 +656,8 @@ class MIDIManager: ObservableObject {
             
                 let capturedBytesArray = bytesArray
                 processQueue.async { [weak self, capturedBytesArray] in
-                    guard let strongSelf = self else { return }
                     Task { @MainActor in
-                        strongSelf.processSingleMIDIMessageOnBackgroundQueue(capturedBytesArray)
+                        self?.processSingleMIDIMessageOnBackgroundQueue(capturedBytesArray)
                     }
                 }
             
@@ -762,5 +785,46 @@ class MIDIManager: ObservableObject {
         self.isSettingInitialMode = false
         self.hasAttemptedSevenSegmentProbe = false
         self.initialProbeCompletedOrModeSet = false
+    }
+    
+    private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
+    private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
+    private let expectedFrameSize = 128 * 6
+    private let expectedSevenSegmentDataLength = 5
+    private let frameTimeout: TimeInterval = 0.2
+    private let maxDeltaFails = 3
+    private let maxSysExSize = 1024 * 32
+    private let screenWidth = 128
+    private let screenHeight = 48
+    private let bytesPerRow = 128
+    private let numRows = 6
+    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
+    private let delugePortName = ""
+    private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
+    private let updateInterval: TimeInterval = 0.05
+    private var client: MIDIClientRef = 0
+    private var inputPort: MIDIPortRef = 0
+    private var outputPort: MIDIPortRef = 0
+    private var delugeInput: MIDIEndpointRef?
+    private var delugeOutput: MIDIEndpointRef?
+    private var sysExBuffer: [UInt8] = []
+    private var connectionTimer: Timer?
+    private var lastPacketTime = Date()
+    private var isProcessingSysEx = false
+    private var lastScanTime: Date = Date()
+    private let minimumScanInterval: TimeInterval = 1.0
+    private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
+    private let sysExRequestSevenSegment: [UInt8] = [0xf0, 0x7d, 0x02, 0x01, 0x00, 0xf7]
+    private let sysExToggleDisplayScreen: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x04, 0xf7]
+    private var probeTimer: Timer?
+    private var hasAttemptedSevenSegmentProbe: Bool = false
+    private var lastSelectedPortName: String? {
+        didSet {
+            if let name = lastSelectedPortName {
+                UserDefaults.standard.set(name, forKey: "lastSelectedPort")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "lastSelectedPort")
+            }
+        }
     }
 }

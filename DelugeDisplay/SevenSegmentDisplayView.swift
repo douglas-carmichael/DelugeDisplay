@@ -8,7 +8,6 @@ struct SevenSegmentDisplayView: View {
     private let intrinsicDigitHeight: CGFloat = 120
     private let digitSpacing: CGFloat = 10
 
-
     private var activeColor: Color {
         switch midiManager.displayColorMode {
         case .normal: return .red
@@ -38,12 +37,10 @@ struct SevenSegmentDisplayView: View {
             return min(scaleBasedOnWidth, scaleBasedOnHeight)
         }()
 
-        // MOVED: Blur logic now internal to SevenSegmentDisplayView
         let blurRadius: CGFloat = {
             if !midiManager.smoothingEnabled {
                 return 0
             }
-            // Base blur values (will be scaled)
             let baseLow: CGFloat = 0.8
             let baseMedium: CGFloat = 1.5
             let baseHigh: CGFloat = 2.5
@@ -56,9 +53,6 @@ struct SevenSegmentDisplayView: View {
             case .none: effectiveRadius = 0
             @unknown default: effectiveRadius = baseMedium
             }
-            // Scale the blur radius by the calculated display scale.
-            // We might need a factor here if direct scaling is too much/too little.
-            // Let's start with direct scaling.
             return effectiveRadius * calculatedScale
         }()
 
@@ -85,7 +79,7 @@ struct SevenSegmentDisplayView: View {
         .padding()
         .background(Color.black)
         .cornerRadius(10)
-        .blur(radius: blurRadius) // APPLY BLUR to the entire SevenSegmentDisplayView composite
+        .blur(radius: blurRadius)
     }
 }
 
@@ -117,9 +111,9 @@ struct SevenSegmentDisplayView_Previews: PreviewProvider {
                 .frame(width: 300, height: 100)
             
             Text("Live Data Preview (Placeholder - Use App)")
-            SevenSegmentDisplayView(availableSize: CGSize(width: 350, height: 120))
-                .environmentObject(MIDIManager())
-                .frame(width: 350, height: 120)
+             SevenSegmentDisplayView(availableSize: CGSize(width: 350, height: 120))
+                 .environmentObject(MIDIManager())
+                 .frame(width: 350, height: 120)
         }
         .padding()
     }

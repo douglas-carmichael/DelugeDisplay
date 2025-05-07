@@ -31,17 +31,28 @@ struct ContentView: View {
                 .ignoresSafeArea()
             
             if midiManager.isConnected {
-                GeometryReader { geometry in
-                    DelugeScreenView()
-                    // If DelugeScreenView needs to expose its saveScreenshot instance method,
-                    // it would typically be done by calling a method on midiManager that then interacts with its state.
-                    // For simplicity, we changed saveScreenshot() above to use the static DelugeScreenView method.
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if midiManager.displayMode == .oled {
+                    GeometryReader { geometry in
+                        DelugeScreenView()
+                        // If DelugeScreenView needs to expose its saveScreenshot instance method,
+                        // it would typically be done by calling a method on midiManager that then interacts with its state.
+                        // For simplicity, we changed saveScreenshot() above to use the static DelugeScreenView method.
+                        .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
+                    }
+                    .aspectRatio(128.0/48.0, contentMode: .fit) // Ensure floating point for aspect ratio
+                    .padding(2)
+                    .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
+                    .frame(minWidth: 256, minHeight: 96)
+                } else {
+                    GeometryReader { geometry in
+                        SevenSegmentDisplayView(availableSize: geometry.size) // CORRECTED: Pass geometry.size
+                            .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
+                    }
+                    .aspectRatio(128.0/48.0, contentMode: .fit) // You might need a different aspect ratio or layout for 7-segment
+                    .padding(2)
+                    .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
+                    .frame(minWidth: 256, minHeight: 96) // Adjust minWidth/Height if needed for 7-segment
                 }
-                .aspectRatio(128.0/48.0, contentMode: .fit) // Ensure floating point for aspect ratio
-                .padding(2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(minWidth: 256, minHeight: 96)
             } else {
                 GeometryReader { geometry in
                     DelugeFont.renderText(
@@ -50,7 +61,7 @@ struct ContentView: View {
                     )
                 }
                 .aspectRatio(128.0/48.0, contentMode: .fit) // Ensure floating point
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
                 .frame(minWidth: 256, minHeight: 96)
             }
         }
