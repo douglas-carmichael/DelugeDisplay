@@ -237,6 +237,43 @@ struct DelugeScreenView: View {
     var body: some View {
         if midiManager.displayMode == .oled {
             GeometryReader { geometry in
+                let availableAspect = geometry.size.width / geometry.size.height
+                let imageAspect = CGFloat(screenWidth) / CGFloat(screenHeight)
+                
+                let (drawWidth, drawHeight): (CGFloat, CGFloat) = {
+                    var calculatedWidth: CGFloat
+                    var calculatedHeight: CGFloat
+                    if availableAspect > imageAspect { // availableAspect and imageAspect are captured from the outer scope
+                        calculatedHeight = geometry.size.height
+                        calculatedWidth = calculatedHeight * imageAspect
+                    } else {
+                        calculatedWidth = geometry.size.width
+                        calculatedHeight = calculatedWidth / imageAspect
+                    }
+                    return (calculatedWidth, calculatedHeight)
+                }()
+                
+                let effectiveOledScale = screenWidth > 0 ? drawWidth / CGFloat(screenWidth) : 1.0
+
+                let oledBlurRadius: CGFloat = {
+                    if !midiManager.smoothingEnabled {
+                        return 0
+                    }
+                    let baseLow: CGFloat = 0.1    // Was 0.25
+                    let baseMedium: CGFloat = 0.3 // Was 0.6
+                    let baseHigh: CGFloat = 0.6   // Was 0.9
+                    
+                    var tempRadius: CGFloat = 0
+                    switch midiManager.smoothingQuality {
+                    case .low: tempRadius = baseLow
+                    case .medium: tempRadius = baseMedium
+                    case .high: tempRadius = baseHigh
+                    case .none: tempRadius = 0
+                    @unknown default: tempRadius = baseMedium
+                    }
+                    return tempRadius * effectiveOledScale
+                }()
+
                 Canvas { context, size in
                     guard !midiManager.frameBuffer.isEmpty, midiManager.frameBuffer.count == screenWidth * blocksHigh else {
                         context.fill(
@@ -245,27 +282,19 @@ struct DelugeScreenView: View {
                         )
                         return
                     }
-                    if let image = createImage(width: screenWidth, height: screenHeight) {
-                        let resolvedImage = Image(image, scale: 1.0, label: Text("OLED Display"))
-                            .interpolation(midiManager.smoothingEnabled ? midiManager.smoothingQuality : .none)
+                    if let cgImage = createImage(width: screenWidth, height: screenHeight) {
+                        // The .blur() modifier will then handle all smoothing.
+                        let interpolationMode: Image.Interpolation = .none
+                        
+                        let resolvedImage = Image(cgImage, scale: 1.0, label: Text("OLED Display"))
+                            .interpolation(interpolationMode) // APPLY the interpolation modeEd
+                        
                         context.fill(
                             Path(CGRect(origin: .zero, size: size)),
                             with: .color(midiManager.displayColorMode == .normal ? .black : .white)
                         )
-                        let availableAspect = size.width / size.height
-                        let imageAspect = CGFloat(screenWidth) / CGFloat(screenHeight)
-                        let drawWidth: CGFloat
-                        let drawHeight: CGFloat
-                        if availableAspect > imageAspect {
-                            drawHeight = size.height
-                            drawWidth = drawHeight * imageAspect
-                        } else {
-                            drawWidth = size.width
-                            drawHeight = drawWidth / imageAspect
-                        }
-                        let x = (size.width - drawWidth) / 2
-                        let y = (size.height - drawHeight) / 2
-                        context.draw(resolvedImage, in: CGRect(x: x, y: y, width: drawWidth, height: drawHeight))
+                        
+                        context.draw(resolvedImage, in: CGRect(origin: .zero, size: size))
                     } else {
                          context.fill(
                             Path(CGRect(origin: .zero, size: size)),
@@ -274,6 +303,9 @@ struct DelugeScreenView: View {
                         logger.error("Failed to create CGImage for OLED display in Canvas.")
                     }
                 }
+                .blur(radius: oledBlurRadius)
+                .frame(width: drawWidth, height: drawHeight)
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
             .frame(
                 idealWidth: CGFloat(screenWidth) * minimumScale,
@@ -282,7 +314,8 @@ struct DelugeScreenView: View {
             .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
             .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
             .edgesIgnoringSafeArea(.all)
-        } else { // Assumed .sevenSegment
+
+        } else {
             GeometryReader { geometry in
                 SevenSegmentDisplayView(availableSize: geometry.size)
                     .background(Color.black)

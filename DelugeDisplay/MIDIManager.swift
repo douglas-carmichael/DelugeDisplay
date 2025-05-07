@@ -112,33 +112,71 @@ class MIDIManager: ObservableObject {
     
     init() {
         self.smoothingEnabled = UserDefaults.standard.bool(forKey: "smoothingEnabled")
-        
-        let interpolationValue = UserDefaults.standard.integer(forKey: "smoothingQuality")
-        switch interpolationValue {
-        case 0: self.smoothingQuality = .none
-        case 1: self.smoothingQuality = .low
-        case 2: self.smoothingQuality = .medium
-        case 3: self.smoothingQuality = .high
-        default: self.smoothingQuality = .medium
+
+        // Step 1: Determine initial smoothing quality, but don't assign to self.smoothingQuality yet.
+        let initialSmoothingQuality: Image.Interpolation
+        if UserDefaults.standard.object(forKey: "smoothingQuality") == nil {
+            initialSmoothingQuality = .low
+            // We'll save this default to UserDefaults later, after self is fully initialized,
+            // by directly calling UserDefaults.standard.set.
+        } else {
+            let interpolationValue = UserDefaults.standard.integer(forKey: "smoothingQuality")
+            switch interpolationValue {
+            case 0: initialSmoothingQuality = .none
+            case 1: initialSmoothingQuality = .low
+            case 2: initialSmoothingQuality = .medium
+            case 3: initialSmoothingQuality = .high
+            default: initialSmoothingQuality = .medium
+            }
         }
-        
+
+        // Step 2: Initialize other properties that are read from UserDefaults or have simple defaults.
         if let savedMode = UserDefaults.standard.string(forKey: "displayColorMode"),
            let mode = DelugeDisplayColorMode(rawValue: savedMode) {
             self.displayColorMode = mode
         } else {
             self.displayColorMode = .normal
         }
+        
         self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
         
-        if let savedDisplayMode = UserDefaults.standard.string(forKey: "displayMode"),
+        // Temporarily disable didSet for displayMode during its initial setup
+        // This property's didSet also calls requestDisplayData() which might not be ideal during init
+        let savedDisplayModeString = UserDefaults.standard.string(forKey: "displayMode")
+        if let savedDisplayMode = savedDisplayModeString,
            let mode = DelugeDisplayMode(rawValue: savedDisplayMode) {
-            self.displayMode = mode
+            // Direct assignment without triggering didSet's side effects during init
+            _displayMode = Published(initialValue: mode)
             logger.info("Loaded initial display mode from UserDefaults: \(mode.rawValue)")
         } else {
-            self.displayMode = .oled
+            // Direct assignment without triggering didSet's side effects during init
+            _displayMode = Published(initialValue: .oled)
             logger.info("Defaulting initial display mode to OLED (no saved preference).")
         }
+        // Initialize isSettingInitialMode which is used by displayMode's didSet
+        self.isSettingInitialMode = false // Default state
 
+        // Step 3: Now assign to self.smoothingQuality. Its didSet can now run more safely.
+        self.smoothingQuality = initialSmoothingQuality
+
+        // Step 4: If initialSmoothingQuality was .low because no key existed, save it now.
+        // This is done *after* self.smoothingQuality is set, so its didSet has already run
+        // for the initial assignment. We are now just ensuring the default is persisted if it was newly chosen.
+        if UserDefaults.standard.object(forKey: "smoothingQuality") == nil {
+            if initialSmoothingQuality == .low { // Confirm it was the default case
+                let value: Int
+                // Re-evaluate value based on the now-set self.smoothingQuality, though it should be .low
+                switch self.smoothingQuality {
+                    case .none: value = 0
+                    case .low: value = 1
+                    case .medium: value = 2
+                    case .high: value = 3
+                    @unknown default: value = 1 // Default to .low's integer value
+                }
+                UserDefaults.standard.set(value, forKey: "smoothingQuality")
+            }
+        }
+        
         setupMIDI()
     }
     
