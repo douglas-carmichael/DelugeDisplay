@@ -71,6 +71,9 @@ struct DelugeScreenView: View {
             inset = max(0, finalGap / 2.0)
         }
 
+        context.translateBy(x: 0, y: CGFloat(scaledHeight))
+        context.scaleBy(x: 1.0, y: -1.0)
+
         for blk in 0..<self.blocksHigh {
             for rowInBlock in 0..<8 {
                 let mask = UInt8(1 << rowInBlock)
@@ -88,7 +91,7 @@ struct DelugeScreenView: View {
                         let cgY = CGFloat((blk * 8 + rowInBlock) * scale)
 
                         let rectX = cgX + inset
-                        let rectY = cgY + inset
+                        let rectY = cgY + inset // Use the original cgY, the context transform handles flipping
                         let rectSide = pixelBlockSize - (2 * inset)
 
                         if rectSide > 0 {
@@ -166,6 +169,9 @@ struct DelugeScreenView: View {
             let finalGap = max(minPixelGapInOutputImage, initialGap)
             inset = max(0, finalGap / 2.0)
         }
+
+        context.translateBy(x: 0, y: CGFloat(scaledHeight))
+        context.scaleBy(x: 1.0, y: -1.0)
 
         for blk in 0..<blocksHigh {
             for rowInBlock in 0..<8 {
