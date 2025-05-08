@@ -10,9 +10,22 @@
 		A3EF786B2DB7460E003EBE9E /* DelugeDisplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DelugeDisplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A341D1E72DCC6C300000F65E /* Exceptions for "DelugeDisplay" folder in "DelugeDisplay" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				README.md,
+			);
+			target = A3EF786A2DB7460E003EBE9E /* DelugeDisplay */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A3EF786D2DB7460E003EBE9E /* DelugeDisplay */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A341D1E72DCC6C300000F65E /* Exceptions for "DelugeDisplay" folder in "DelugeDisplay" target */,
+			);
 			path = DelugeDisplay;
 			sourceTree = "<group>";
 		};
