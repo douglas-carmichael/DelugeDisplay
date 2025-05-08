@@ -29,12 +29,16 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             else { continue }
             
             if s + size > data.count {
+                #if DEBUG
                 logger.error("Dense packet truncated")
+                #endif
                 throw RLEError.truncatedData
             }
             
             if dst.count + size > maxBytes {
+                #if DEBUG
                 logger.error("Dense packet would exceed maxBytes")
+                #endif
                 break
             }
             
@@ -83,7 +87,9 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
     
     while s + 2 <= delta.count {
         guard s + 1 < delta.count else {
+            #if DEBUG
             logger.error("Delta data truncated")
+            #endif
             break
         }
         
@@ -91,7 +97,9 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
         s += 2
         
         if offset >= frameSize {
+            #if DEBUG
             logger.error("Invalid delta offset: \(offset), max: \(frameSize)")
+            #endif
             throw RLEError.truncatedData
         }
         
@@ -109,7 +117,9 @@ func applyDeltaRLE(_ delta: [UInt8], to buffer: inout [UInt8]) throws {
             }
             s += used
         } catch {
+            #if DEBUG
             logger.error("Delta decode error at offset \(offset): \(error.localizedDescription)")
+            #endif
             while s < delta.count && (delta[s] & 0x80) == 0 {
                 s += 1
             }

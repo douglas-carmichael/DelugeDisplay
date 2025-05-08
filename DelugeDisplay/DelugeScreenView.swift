@@ -35,7 +35,9 @@ struct DelugeScreenView: View {
                               bytesPerRow: scaledWidth * 4,
                               space: colorSpace,
                               bitmapInfo: bitmapInfo.rawValue) else {
+            #if DEBUG
             logger.error("Failed to create CGContext")
+            #endif
             return nil
         }
         
@@ -58,7 +60,9 @@ struct DelugeScreenView: View {
         
         let currentFrameBuffer = midiManager.frameBuffer
         guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else {
+            #if DEBUG
             logger.info("Frame buffer is invalid or empty for OLED image creation.")
+            #endif
             return context.makeImage() // Return background
         }
 
@@ -106,7 +110,9 @@ struct DelugeScreenView: View {
                               bytesPerRow: scaledWidth * 4,
                               space: colorSpace,
                               bitmapInfo: bitmapInfo.rawValue) else {
+            #if DEBUG
             logger.error("Screenshot: Failed to create CGContext")
+            #endif
             return nil
         }
         
@@ -127,7 +133,9 @@ struct DelugeScreenView: View {
         context.setFillColor(foregroundColor)
         
         guard !frameBuffer.isEmpty, frameBuffer.count == screenWidth * blocksHigh else {
+            #if DEBUG
             logger.info("Screenshot: Frame buffer invalid or empty.")
+            #endif
             return context.makeImage() // Return background
         }
 
@@ -173,7 +181,9 @@ struct DelugeScreenView: View {
             filenamePrefix = "DelugeDisplay_OLED"
             
         } else if midiManager.displayMode == .sevenSegment {
+            #if DEBUG
             localLogger.info("Attempting to save screenshot for 7-Segment display.")
+            #endif
             
             let screenshotSize = CGSize(width: 400, height: 150)
             
@@ -187,12 +197,16 @@ struct DelugeScreenView: View {
             filenamePrefix = "DelugeDisplay_7Segment"
 
         } else {
+            #if DEBUG
             localLogger.warning("Screenshot not supported for current display mode: \(midiManager.displayMode.rawValue)")
+            #endif
             return
         }
 
         guard let finalImage = image else {
+            #if DEBUG
             localLogger.error("Failed to create image for screenshot for mode: \(midiManager.displayMode.rawValue)")
+            #endif
             return
         }
         
@@ -209,13 +223,17 @@ struct DelugeScreenView: View {
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
                 guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    #if DEBUG
                     localLogger.error("Failed to create image destination")
+                    #endif
                     return
                 }
                 let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
                 CGImageDestinationAddImage(destination, finalImage, properties as CFDictionary)
                 if !CGImageDestinationFinalize(destination) {
+                    #if DEBUG
                     localLogger.error("Failed to save screenshot")
+                    #endif
                 }
             }
         }
@@ -223,11 +241,15 @@ struct DelugeScreenView: View {
         
     func saveScreenshot() {
         guard midiManager.displayMode == .oled else {
+            #if DEBUG
             logger.info("Screenshot currently only supported for OLED display mode.")
+            #endif
             return
         }
         guard let image = createImage(width: screenWidth, height: screenHeight, scale: 4) else {
+            #if DEBUG
             logger.error("Failed to create image for screenshot")
+            #endif
             return
         }
         let dateFormatter = DateFormatter()
@@ -241,13 +263,17 @@ struct DelugeScreenView: View {
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
                 guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    #if DEBUG
                     logger.error("Failed to create image destination")
+                    #endif
                     return
                 }
                 let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
                 CGImageDestinationAddImage(destination, image, properties as CFDictionary)
                 if !CGImageDestinationFinalize(destination) {
+                    #if DEBUG
                     logger.error("Failed to save screenshot")
+                    #endif
                 }
             }
         }
@@ -309,7 +335,9 @@ struct DelugeScreenView: View {
                             context.draw(Image(cgImage, scale: 1.0, label: Text("OLED Display")).interpolation(.none), in: CGRect(origin: .zero, size: size))
                         } else {
                              context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.gray))
+                             #if DEBUG
                              // parent.logger.error(...) // logger is also on parent
+                             #endif
                         }
                     }
                     .blur(radius: oledBlurRadius)
