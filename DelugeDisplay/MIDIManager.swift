@@ -82,6 +82,11 @@ class MIDIManager: ObservableObject {
             UserDefaults.standard.set(displayColorMode.rawValue, forKey: "displayColorMode")
         }
     }
+    @Published var oledPixelGridModeEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(oledPixelGridModeEnabled, forKey: "oledPixelGridModeEnabled")
+        }
+    }
     @Published var displayMode: DelugeDisplayMode = .oled {
         didSet {
             guard oldValue != self.displayMode else { return }
@@ -151,7 +156,7 @@ class MIDIManager: ObservableObject {
                             // #if DEBUG
                             // self.logger.info("7SEG->OLED: Delayed: Optionally re-clearing frame buffer. Gen: \(generation)")
                             // #endif
-                            // self.clearFrameBuffer() 
+                            // self.clearFrameBuffer()
                             
                             // 5. Request actual OLED data
                             #if DEBUG
@@ -240,6 +245,8 @@ class MIDIManager: ObservableObject {
             self.displayColorMode = .normal
         }
         
+        self.oledPixelGridModeEnabled = UserDefaults.standard.bool(forKey: "oledPixelGridModeEnabled")
+
         self.lastSelectedPortName = UserDefaults.standard.string(forKey: "lastSelectedPort")
         
         let savedDisplayModeString = UserDefaults.standard.string(forKey: "displayMode")
@@ -368,14 +375,14 @@ class MIDIManager: ObservableObject {
         
         var finalPortToSelect: MIDIPort? = nil
         if self.selectedPort == nil {
-            if let autoPort = portToAutoSelect { finalPortToSelect = autoPort; 
+            if let autoPort = portToAutoSelect { finalPortToSelect = autoPort;
                 #if DEBUG
-                self.logger.info("Auto-selecting port: \(autoPort.name)") 
+                self.logger.info("Auto-selecting port: \(autoPort.name)")
                 #endif
             }
-            else if let rePort = portToReSelect { finalPortToSelect = rePort; 
+            else if let rePort = portToReSelect { finalPortToSelect = rePort;
                 #if DEBUG
-                self.logger.info("Re-selecting last used port: \(rePort.name)") 
+                self.logger.info("Re-selecting last used port: \(rePort.name)")
                 #endif
             }
         }
@@ -847,20 +854,29 @@ class MIDIManager: ObservableObject {
         
         if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
             do {
+                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
-                self.frameBuffer = unpacked
+                self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
+                
+                if unpacked.count == self.expectedFrameSize { 
+                    self.frameBuffer = unpacked
+                } else {
+                    self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
+                    self.clearFrameBuffer() 
+                }
+
                 if !self.isConnected { self.isConnected = true }
                 dataReceived = true
                 if self.isSettingInitialMode && !self.initialProbeCompletedOrModeSet {
-                     #if DEBUG
-                     logger.debug("OLED data received during probe. Setting initial mode to OLED.")
-                     #endif
-                     setInitialDisplayMode(.oled)
+                    #if DEBUG
+                    logger.debug("OLED data received during probe. Setting initial mode to OLED.")
+                    #endif
+                    setInitialDisplayMode(.oled)
                 }
             } catch {
-                 #if DEBUG
-                 logger.error("Error unpacking OLED data: \(error.localizedDescription)")
-                 #endif
+                #if DEBUG
+                logger.error("Error unpacking OLED data: \(error.localizedDescription)")
+                #endif
             }
         } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 { // 7-Seg
             self.sevenSegmentDots = bytes[6]
@@ -947,14 +963,14 @@ class MIDIManager: ObservableObject {
     
     private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
     private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
-    private let expectedFrameSize = 128 * 6
+    private let expectedFrameSize = 768 
     private let expectedSevenSegmentDataLength = 5
     private let frameTimeout: TimeInterval = 0.2
     private let maxDeltaFails = 3
-    private let maxSysExSize = 1024 * 32
+    private let maxSysExSize = 1024 * 32 
     private let screenWidth = 128
     private let screenHeight = 48
-    private let bytesPerRow = 128
+    private let bytesPerRow = 128 
     private let numRows = 6
     private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
     private let delugePortName = ""

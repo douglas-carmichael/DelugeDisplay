@@ -12,16 +12,6 @@ struct DelugeScreenView: View {
     
     private let logger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView")
     
-    private func flipByte(_ byte: UInt8) -> UInt8 {
-        var flipped: UInt8 = 0
-        for i in 0..<8 {
-            if (byte & (1 << i)) != 0 {
-                flipped |= (1 << (7 - i))
-            }
-        }
-        return flipped
-    }
-    
     private func createImage(width: Int, height: Int, scale: Int = 1) -> CGImage? {
         let scaledWidth = width * scale
         let scaledHeight = height * scale
@@ -36,7 +26,7 @@ struct DelugeScreenView: View {
                               space: colorSpace,
                               bitmapInfo: bitmapInfo.rawValue) else {
             #if DEBUG
-            logger.error("Failed to create CGContext")
+            logger.error("Failed to create CGContext for createImage")
             #endif
             return nil
         }
@@ -59,29 +49,55 @@ struct DelugeScreenView: View {
         context.setFillColor(foregroundColor)
         
         let currentFrameBuffer = midiManager.frameBuffer
-        guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else {
+        
+        guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else { // screenWidth and blocksHigh are from the struct
             #if DEBUG
-            logger.info("Frame buffer is invalid or empty for OLED image creation.")
+            logger.info("Frame buffer is invalid or empty for createImage.")
             #endif
             return context.makeImage() // Return background
         }
 
-        for blk in 0..<blocksHigh {
-            for row in 0..<8 {
-                let mask = UInt8(1 << row)
-                for col in 0..<screenWidth {
-                    let byteIndex = blk * screenWidth + col
-                    let byte = flipByte(currentFrameBuffer[byteIndex])
-                    let pixelOn = (byte & mask) != 0
+        let isPixelGridMode = midiManager.oledPixelGridModeEnabled
+        let pixelBlockSize = CGFloat(scale) // This is the scaled pixel size
+        let insetCorrection = isPixelGridMode ? 0.5 * CGFloat(scale) : 0.0 // Scale the 0.5 inset if pixelGridMode
+
+        // Corrected rendering logic matching OLEDViewContent
+        for blk in 0..<self.blocksHigh { // Use self.blocksHigh
+            for rowInBlock in 0..<8 {
+                let mask = UInt8(1 << rowInBlock) // LSB is top pixel of segment
+                for col in 0..<self.screenWidth { // Use self.screenWidth
+                    let byteIndex = blk * self.screenWidth + col // srcBlk = blk, srcCol = col
+                    
+                    guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
+                    let sourceByte = currentFrameBuffer[byteIndex]
+                    // No flipByte call, use sourceByte directly
+                    
+                    let pixelOn = (sourceByte & mask) != 0
                     
                     if pixelOn {
-                        let y = scaledHeight - (blk * 8 + (7 - row)) * scale - scale
-                        context.fill(CGRect(
-                            x: col * scale,
-                            y: y,
-                            width: scale,
-                            height: scale
-                        ))
+                        // Calculate position for scaled drawing
+                        let cgX = CGFloat(col * scale)
+                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale) // Top-down physical row calculation
+
+                        let rectX = cgX + insetCorrection
+                        let rectY = cgY + insetCorrection
+                        let rectSide = pixelBlockSize - (2 * insetCorrection)
+
+                        if rectSide > 0 {
+                             context.fill(CGRect(
+                                 x: rectX,
+                                 y: rectY,
+                                 width: rectSide,
+                                 height: rectSide
+                             ))
+                        } else if !isPixelGridMode { // Fallback for non-grid mode if rectSide becomes non-positive
+                             context.fill(CGRect(
+                                 x: cgX,
+                                 y: cgY,
+                                 width: pixelBlockSize,
+                                 height: pixelBlockSize
+                             ))
+                        }
                     }
                 }
             }
@@ -92,9 +108,10 @@ struct DelugeScreenView: View {
     private static func createCGImageForScreenshot(
         frameBuffer: [UInt8],
         colorMode: DelugeDisplayColorMode,
-        screenWidth: Int,
-        screenHeight: Int,
-        blocksHigh: Int,
+        isPixelGridMode: Bool,
+        screenWidth: Int,       // Parameter
+        screenHeight: Int,      // Parameter
+        blocksHigh: Int,        // Parameter (derived from screenHeight)
         scale: Int,
         logger: Logger
     ) -> CGImage? {
@@ -132,26 +149,55 @@ struct DelugeScreenView: View {
         context.fill(CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
         context.setFillColor(foregroundColor)
         
+        // Ensure consistency: screenWidth * blocksHigh should match frameBuffer.count
         guard !frameBuffer.isEmpty, frameBuffer.count == screenWidth * blocksHigh else {
             #if DEBUG
-            logger.info("Screenshot: Frame buffer invalid or empty.")
+            logger.info("Screenshot: Frame buffer invalid or empty. Expected \(screenWidth * blocksHigh), got \(frameBuffer.count)")
             #endif
             return context.makeImage() // Return background
         }
 
-        for blk in 0..<blocksHigh {
-            for row in 0..<8 {
-                let mask = UInt8(1 << row)
-                for col in 0..<screenWidth {
-                    let byteIndex = blk * screenWidth + col
-                    var flippedLocal: UInt8 = 0
-                    for i in 0..<8 { if (frameBuffer[byteIndex] & (1 << i)) != 0 { flippedLocal |= (1 << (7 - i)) } }
-                    let byte = flippedLocal // Use the locally flipped byte
+        let pixelBlockSize = CGFloat(scale) // This is the scaled pixel size
+        // Correct inset calculation for scaled drawing
+        let insetCorrection = isPixelGridMode ? 0.5 * CGFloat(scale) : 0.0
 
-                    let pixelOn = (byte & mask) != 0
+        // Corrected rendering logic matching OLEDViewContent
+        for blk in 0..<blocksHigh { // Use parameter blocksHigh
+            for rowInBlock in 0..<8 {
+                let mask = UInt8(1 << rowInBlock) // LSB is top pixel of segment
+                for col in 0..<screenWidth { // Use parameter screenWidth
+                    // srcBlk = blk, srcCol = col
+                    let byteIndex = blk * screenWidth + col
+                    
+                    guard byteIndex >= 0 && byteIndex < frameBuffer.count else { continue }
+                    let sourceByte = frameBuffer[byteIndex]
+                    // No flipByte call, use sourceByte directly
+                    
+                    let pixelOn = (sourceByte & mask) != 0
                     if pixelOn {
-                        let y = scaledHeight - (blk * 8 + (7 - row)) * scale - scale
-                        context.fill(CGRect(x: col * scale, y: y, width: scale, height: scale))
+                        // Calculate position for scaled drawing
+                        let cgX = CGFloat(col * scale)
+                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale) // Top-down physical row calculation
+
+                        let rectX = cgX + insetCorrection
+                        let rectY = cgY + insetCorrection
+                        let rectSide = pixelBlockSize - (2 * insetCorrection) // Pixel is square
+
+                        if rectSide > 0 {
+                            context.fill(CGRect(
+                                x: rectX,
+                                y: rectY,
+                                width: rectSide,
+                                height: rectSide
+                            ))
+                        } else if !isPixelGridMode {  // Fallback for non-grid mode
+                             context.fill(CGRect(
+                                 x: cgX,
+                                 y: cgY,
+                                 width: pixelBlockSize,
+                                 height: pixelBlockSize
+                             ))
+                        }
                     }
                 }
             }
@@ -172,10 +218,11 @@ struct DelugeScreenView: View {
             image = createCGImageForScreenshot(
                 frameBuffer: midiManager.frameBuffer,
                 colorMode: midiManager.displayColorMode,
+                isPixelGridMode: midiManager.oledPixelGridModeEnabled,
                 screenWidth: localScreenWidth,
                 screenHeight: localScreenHeight,
                 blocksHigh: localBlocksHigh,
-                scale: 4, // Scale for OLED screenshot
+                scale: 4,
                 logger: localLogger
             )
             filenamePrefix = "DelugeDisplay_OLED"
@@ -284,82 +331,106 @@ struct DelugeScreenView: View {
         let screenWidth: Int
         let screenHeight: Int
         let blocksHigh: Int
-        let minimumScale: CGFloat
-        var parent: DelugeScreenView
+
+        // flipByte function (still unused by this rendering logic)
+        private func flipByte(_ byte: UInt8) -> UInt8 {
+            var flipped: UInt8 = 0
+            for i in 0..<8 {
+                if (byte & (1 << i)) != 0 {
+                    flipped |= (1 << (7 - i))
+                }
+            }
+            return flipped
+        }
 
         var body: some View {
-            guard midiManager.displayMode == .oled else {
-                return AnyView(Color.clear)
-            }
+            GeometryReader { geometry in
+                let drawWidth = geometry.size.width
+                let drawHeight = geometry.size.height
+                
+                let canvasPixelWidth = screenWidth > 0 ? drawWidth / CGFloat(screenWidth) : 1.0
+                let canvasPixelHeight = screenHeight > 0 ? drawHeight / CGFloat(screenHeight) : 1.0
 
-            return AnyView(
-                GeometryReader { geometry in
-                    let availableAspect = geometry.size.width / geometry.size.height
-                    let imageAspect = CGFloat(screenWidth) / CGFloat(screenHeight)
+                let oledBlurRadius: CGFloat = {
+                    if !midiManager.smoothingEnabled { return 0 }
+                    let baseLow: CGFloat = 0.1, baseMedium: CGFloat = 0.3, baseHigh: CGFloat = 0.6
+                    var tempRadius: CGFloat = 0
+                    switch midiManager.smoothingQuality {
+                    case .low: tempRadius = baseLow
+                    case .medium: tempRadius = baseMedium
+                    case .high: tempRadius = baseHigh
+                    default: tempRadius = baseMedium
+                    }
+                    return tempRadius * (canvasPixelWidth / 2.0)
+                }()
+
+                Canvas { context, size in // size here will be drawWidth, drawHeight
+                    let backgroundColor = Color(midiManager.displayColorMode == .normal ? .black : .white)
+                    let foregroundColor = Color(midiManager.displayColorMode == .normal ? .white : .black)
+
+                    context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(backgroundColor))
                     
-                    let (drawWidth, drawHeight): (CGFloat, CGFloat) = {
-                        var calculatedWidth: CGFloat
-                        var calculatedHeight: CGFloat
-                        if availableAspect > imageAspect {
-                            calculatedHeight = geometry.size.height
-                            calculatedWidth = calculatedHeight * imageAspect
-                        } else {
-                            calculatedWidth = geometry.size.width
-                            calculatedHeight = calculatedWidth / imageAspect
-                        }
-                        return (calculatedWidth, calculatedHeight)
-                    }()
-                    
-                    let effectiveOledScale = screenWidth > 0 ? drawWidth / CGFloat(screenWidth) : 1.0
+                    let currentFrameBuffer = midiManager.frameBuffer
+                    guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else {
+                        return
+                    }
 
-                    let oledBlurRadius: CGFloat = {
-                        if !midiManager.smoothingEnabled { return 0 }
-                        let baseLow: CGFloat = 0.1, baseMedium: CGFloat = 0.3, baseHigh: CGFloat = 0.6
-                        var tempRadius: CGFloat = 0
-                        switch midiManager.smoothingQuality {
-                        case .low: tempRadius = baseLow
-                        case .medium: tempRadius = baseMedium
-                        case .high: tempRadius = baseHigh
-                        default: tempRadius = baseMedium
-                        }
-                        return tempRadius * effectiveOledScale
-                    }()
+                    let isPixelGridMode = midiManager.oledPixelGridModeEnabled
+                    let inset: CGFloat = isPixelGridMode ? 0.5 : 0.0
 
-                    Canvas { context, size in
-                        guard !midiManager.frameBuffer.isEmpty, midiManager.frameBuffer.count == screenWidth * blocksHigh else {
-                            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(midiManager.displayColorMode == .normal ? .black : .white))
-                            return
-                        }
-                        if let cgImage = parent.createImage(width: screenWidth, height: screenHeight) {
-                            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(midiManager.displayColorMode == .normal ? .black : .white))
-                            context.draw(Image(cgImage, scale: 1.0, label: Text("OLED Display")).interpolation(.none), in: CGRect(origin: .zero, size: size))
-                        } else {
-                             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.gray))
-                             #if DEBUG
-                             // parent.logger.error(...) // logger is also on parent
-                             #endif
+                    for blk in 0..<blocksHigh {
+                        for rowInBlock in 0..<8 {
+                            let mask = UInt8(1 << rowInBlock)
+                            for col in 0..<screenWidth {
+                                
+                                let srcCol = col
+                                let srcBlk = blk
+                                
+                                let byteIndex = srcBlk * screenWidth + srcCol
+                                guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
+                                
+                                let sourceByte = currentFrameBuffer[byteIndex]
+                                let byteToRender = sourceByte
+                                
+                                let pixelOn = (byteToRender & mask) != 0
+                                
+                                if pixelOn {
+                                    let canvasX = CGFloat(col) * canvasPixelWidth
+                                    let physicalRow = blk * 8 + rowInBlock
+                                    let canvasY = CGFloat(physicalRow) * canvasPixelHeight
+
+                                    let rectX = canvasX + inset
+                                    let rectY = canvasY + inset
+                                    let rectWidth = max(0, canvasPixelWidth - (2 * inset))
+                                    let rectHeight = max(0, canvasPixelHeight - (2 * inset))
+
+                                    if rectWidth > 0 && rectHeight > 0 {
+                                        context.fill(
+                                            Path(CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight)),
+                                            with: .color(foregroundColor)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
-                    .blur(radius: oledBlurRadius)
-                    .frame(width: drawWidth, height: drawHeight)
-                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 }
-                .frame(idealWidth: CGFloat(screenWidth) * minimumScale, idealHeight: CGFloat(screenHeight) * minimumScale)
-                .aspectRatio(CGFloat(screenWidth) / CGFloat(screenHeight), contentMode: .fit)
-                .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
-                .edgesIgnoringSafeArea(.all)
-            )
+                .blur(radius: oledBlurRadius)
+                .frame(width: drawWidth, height: drawHeight) // Canvas fills the GeometryReader
+            }
+            .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
         }
     }
-    
+
     private struct SevenSegmentViewContent: View {
-        @EnvironmentObject var midiManager: MIDIManager 
+        @EnvironmentObject var midiManager: MIDIManager
 
         var body: some View {
             if midiManager.displayMode == .sevenSegment {
                 GeometryReader { geometry in
                     SevenSegmentDisplayView(availableSize: geometry.size)
-                        .id("\(midiManager.sevenSegmentDigits)-\(midiManager.sevenSegmentDots)")
+                        .environmentObject(midiManager)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .edgesIgnoringSafeArea(.all)
@@ -376,8 +447,8 @@ struct DelugeScreenView: View {
         Group {
             switch midiManager.displayMode {
             case .oled:
-                OLEDViewContent(screenWidth: screenWidth, screenHeight: screenHeight, blocksHigh: blocksHigh, minimumScale: minimumScale, parent: self)
-                    .zIndex(1) 
+                OLEDViewContent(screenWidth: screenWidth, screenHeight: screenHeight, blocksHigh: blocksHigh)
+                    .zIndex(1)
             case .sevenSegment:
                 SevenSegmentViewContent()
                     .zIndex(0)
@@ -387,11 +458,3 @@ struct DelugeScreenView: View {
         .animation(nil, value: midiManager.displayMode)
     }
 }
-
-/*
- struct DelugeScreenView_Previews: PreviewProvider {
-    static var previews: some View {
-        // ... preview setup ...
-    }
- }
-*/

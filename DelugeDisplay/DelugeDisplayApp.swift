@@ -100,21 +100,26 @@ struct DelugeDisplayApp: App {
                 Text("Low").tag(Image.Interpolation.low)
                 Text("Medium").tag(Image.Interpolation.medium)
                 Text("High").tag(Image.Interpolation.high)
-                Text("None").tag(Image.Interpolation.none)
             }
             .disabled(!midiManager.smoothingEnabled)
         }
+    }
+    
+    private var pixelGridToggle: some View {
+        Toggle("Pixel Grid", isOn: $midiManager.oledPixelGridModeEnabled)
+            .keyboardShortcut("g", modifiers: .command)
+            .disabled(midiManager.displayMode != .oled)
     }
     
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(midiManager)
-                .frame(minWidth: 192, minHeight: 96)
+                .frame(minWidth: 192, minHeight: 96) // Consider if this minHeight needs to be 140 as in ContentView or if ContentView's is sufficient
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 384, height: 192)
+        .defaultSize(width: 384, height: 192) // This is the initial size
         .windowStyle(.automatic)
         .windowToolbarStyle(.unified)
         .defaultPosition(.center)
@@ -129,20 +134,16 @@ struct DelugeDisplayApp: App {
                 .disabled(!midiManager.isConnected)
             }
             
-            CommandGroup(replacing: .sidebar) {
+            CommandGroup(replacing: .sidebar) { // This is the main "View" menu
                 displayModeMenu
-                
                 Divider()
-                
                 displayColorMenu
-                
                 Divider()
-                
                 zoomControls
-                
                 Divider()
-                
                 smoothingControls
+                Divider()
+                pixelGridToggle
             }
             
             CommandMenu("MIDI") {
@@ -150,15 +151,6 @@ struct DelugeDisplayApp: App {
             }
             
             CommandGroup(replacing: .saveItem) { }
-            CommandMenu("View") {
-                 displayModeMenu
-                 Divider()
-                 displayColorMenu
-                 Divider()
-                 zoomControls
-                 Divider()
-                 smoothingControls
-            }
         }
     }
 }

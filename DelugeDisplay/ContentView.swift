@@ -26,51 +26,57 @@ struct ContentView: View {
     }
     
     var body: some View {
-        ZStack {
+        ZStack { // Root ZStack for background color
             Color(midiManager.displayColorMode == .normal ? .black : .white)
                 .ignoresSafeArea()
             
-            if midiManager.isConnected {
-                if midiManager.displayMode == .oled {
-                    GeometryReader { geometry in
-                        DelugeScreenView()
-                        // If DelugeScreenView needs to expose its saveScreenshot instance method,
-                        // it would typically be done by calling a method on midiManager that then interacts with its state.
-                        // For simplicity, we changed saveScreenshot() above to use the static DelugeScreenView method.
-                        .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
+            VStack(spacing: 0) { // Main content VStack
+
+                // Display Area (OLED, 7-Segment, or Waiting Message)
+                ZStack {
+                    // The content of the ZStack will be centered.
+                    if midiManager.isConnected {
+                        if midiManager.displayMode == .oled {
+                            DelugeScreenView() 
+                        } else { // SevenSegment (already connected)
+                            GeometryReader { geometryInZStack in
+                                SevenSegmentDisplayView(availableSize: geometryInZStack.size)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        }
+                    } else { // Not connected, show waiting message
+                        GeometryReader { geometryInZStack in
+                            DelugeFont.renderText(
+                                "WAITING FOR DELUGE",
+                                color: midiManager.displayColorMode == .normal ? .white : .black
+                            )
+                        }
                     }
-                    .aspectRatio(128.0/48.0, contentMode: .fit) // Ensure floating point for aspect ratio
-                    .padding(2)
-                    .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
-                    .frame(minWidth: 256, minHeight: 96)
-                } else {
-                    GeometryReader { geometry in
-                        SevenSegmentDisplayView(availableSize: geometry.size) // CORRECTED: Pass geometry.size
-                            .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
-                    }
-                    .aspectRatio(128.0/48.0, contentMode: .fit) // You might need a different aspect ratio or layout for 7-segment
-                    .padding(2)
-                    .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
-                    .frame(minWidth: 256, minHeight: 96) // Adjust minWidth/Height if needed for 7-segment
                 }
-            } else {
-                GeometryReader { geometry in
-                    DelugeFont.renderText(
-                        "WAITING FOR DELUGE",
-                        color: midiManager.displayColorMode == .normal ? .white : .black
-                    )
-                }
-                .aspectRatio(128.0/48.0, contentMode: .fit) // Ensure floating point
-                .frame(maxWidth: CGFloat.infinity, maxHeight: CGFloat.infinity)
-                .frame(minWidth: 256, minHeight: 96)
-            }
-        }
-        .frame(minWidth: 256, minHeight: 96)
+                .aspectRatio(128.0/48.0, contentMode: .fit) // Apply aspect ratio to the ZStack
+                .frame(maxWidth: .infinity, maxHeight: .infinity) // Allow ZStack to use flexible space
+                .frame(minWidth: 256, minHeight: 96)      // Minimum size for the ZStack
+                .layoutPriority(1)                          // Give display area priority for space
+
+                // if midiManager.isConnected {
+                //     HStack {
+                //         Spacer()
+                //         if midiManager.displayMode == .oled {
+                //             Toggle("Pixel Grid", isOn: $midiManager.oledPixelGridModeEnabled)
+                //                 .foregroundColor(midiManager.displayColorMode == .normal ? .white : .black)
+                //                 .fixedSize()
+                //         }
+                //         Spacer()
+                //     }
+                //     .padding(.horizontal)
+                //     .padding(.bottom, 8)
+                //     .layoutPriority(0)
+                // }
+            } // End main content VStack
+        } // End root ZStack
+        .frame(minWidth: 256, minHeight: 96) 
         .onAppear {
-            // midiManager.setupMIDI() // setupMIDI is called in MIDIManager's init.
-            // Re-evaluating if this is needed here or if init is sufficient.
-            // If ports can change or need re-scanning on appear, it might be useful.
-            // For now, assuming MIDIManager handles its own setup.
+            // midiManager.setupMIDI()
         }
     }
 }
