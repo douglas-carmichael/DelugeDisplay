@@ -50,53 +50,51 @@ struct DelugeScreenView: View {
         
         let currentFrameBuffer = midiManager.frameBuffer
         
-        guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else { // screenWidth and blocksHigh are from the struct
+        guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == self.screenWidth * self.blocksHigh else {
             #if DEBUG
             logger.info("Frame buffer is invalid or empty for createImage.")
             #endif
-            return context.makeImage() // Return background
+            return context.makeImage()
         }
 
         let isPixelGridMode = midiManager.oledPixelGridModeEnabled
-        let pixelBlockSize = CGFloat(scale) // This is the scaled pixel size
-        let insetCorrection = isPixelGridMode ? 0.5 * CGFloat(scale) : 0.0 // Scale the 0.5 inset if pixelGridMode
+        let pixelBlockSize = CGFloat(scale)
 
-        // Corrected rendering logic matching OLEDViewContent
-        for blk in 0..<self.blocksHigh { // Use self.blocksHigh
+        var inset: CGFloat = 0.0
+        if isPixelGridMode {
+            let targetLitProportion: CGFloat = 0.78
+            let minPixelGapInOutputImage: CGFloat = 1.0 // Gap at least 1px in output
+
+            let desiredLitDim = pixelBlockSize * targetLitProportion
+            let initialGap = pixelBlockSize - desiredLitDim
+            let finalGap = max(minPixelGapInOutputImage, initialGap)
+            inset = max(0, finalGap / 2.0)
+        }
+
+        for blk in 0..<self.blocksHigh {
             for rowInBlock in 0..<8 {
-                let mask = UInt8(1 << rowInBlock) // LSB is top pixel of segment
-                for col in 0..<self.screenWidth { // Use self.screenWidth
-                    let byteIndex = blk * self.screenWidth + col // srcBlk = blk, srcCol = col
+                let mask = UInt8(1 << rowInBlock)
+                for col in 0..<self.screenWidth {
+                    
+                    let byteIndex = blk * self.screenWidth + col
                     
                     guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
                     let sourceByte = currentFrameBuffer[byteIndex]
-                    // No flipByte call, use sourceByte directly
                     
                     let pixelOn = (sourceByte & mask) != 0
                     
                     if pixelOn {
-                        // Calculate position for scaled drawing
                         let cgX = CGFloat(col * scale)
-                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale) // Top-down physical row calculation
+                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale)
 
-                        let rectX = cgX + insetCorrection
-                        let rectY = cgY + insetCorrection
-                        let rectSide = pixelBlockSize - (2 * insetCorrection)
+                        let rectX = cgX + inset
+                        let rectY = cgY + inset
+                        let rectSide = pixelBlockSize - (2 * inset)
 
                         if rectSide > 0 {
-                             context.fill(CGRect(
-                                 x: rectX,
-                                 y: rectY,
-                                 width: rectSide,
-                                 height: rectSide
-                             ))
-                        } else if !isPixelGridMode { // Fallback for non-grid mode if rectSide becomes non-positive
-                             context.fill(CGRect(
-                                 x: cgX,
-                                 y: cgY,
-                                 width: pixelBlockSize,
-                                 height: pixelBlockSize
-                             ))
+                             context.fill(CGRect(x: rectX, y: rectY, width: rectSide, height: rectSide))
+                        } else if !isPixelGridMode {
+                             context.fill(CGRect(x: cgX, y: cgY, width: pixelBlockSize, height: pixelBlockSize))
                         }
                     }
                 }
@@ -109,9 +107,9 @@ struct DelugeScreenView: View {
         frameBuffer: [UInt8],
         colorMode: DelugeDisplayColorMode,
         isPixelGridMode: Bool,
-        screenWidth: Int,       // Parameter
-        screenHeight: Int,      // Parameter
-        blocksHigh: Int,        // Parameter (derived from screenHeight)
+        screenWidth: Int,
+        screenHeight: Int,
+        blocksHigh: Int,
         scale: Int,
         logger: Logger
     ) -> CGImage? {
@@ -149,54 +147,49 @@ struct DelugeScreenView: View {
         context.fill(CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
         context.setFillColor(foregroundColor)
         
-        // Ensure consistency: screenWidth * blocksHigh should match frameBuffer.count
         guard !frameBuffer.isEmpty, frameBuffer.count == screenWidth * blocksHigh else {
             #if DEBUG
             logger.info("Screenshot: Frame buffer invalid or empty. Expected \(screenWidth * blocksHigh), got \(frameBuffer.count)")
             #endif
-            return context.makeImage() // Return background
+            return context.makeImage()
         }
 
-        let pixelBlockSize = CGFloat(scale) // This is the scaled pixel size
-        // Correct inset calculation for scaled drawing
-        let insetCorrection = isPixelGridMode ? 0.5 * CGFloat(scale) : 0.0
+        let pixelBlockSize = CGFloat(scale)
 
-        // Corrected rendering logic matching OLEDViewContent
-        for blk in 0..<blocksHigh { // Use parameter blocksHigh
+        var inset: CGFloat = 0.0
+        if isPixelGridMode {
+            let targetLitProportion: CGFloat = 0.78
+            let minPixelGapInOutputImage: CGFloat = 1.0 // Gap at least 1px in output
+
+            let desiredLitDim = pixelBlockSize * targetLitProportion
+            let initialGap = pixelBlockSize - desiredLitDim
+            let finalGap = max(minPixelGapInOutputImage, initialGap)
+            inset = max(0, finalGap / 2.0)
+        }
+
+        for blk in 0..<blocksHigh {
             for rowInBlock in 0..<8 {
-                let mask = UInt8(1 << rowInBlock) // LSB is top pixel of segment
-                for col in 0..<screenWidth { // Use parameter screenWidth
-                    // srcBlk = blk, srcCol = col
+                let mask = UInt8(1 << rowInBlock)
+                for col in 0..<screenWidth {
+                    
                     let byteIndex = blk * screenWidth + col
                     
                     guard byteIndex >= 0 && byteIndex < frameBuffer.count else { continue }
                     let sourceByte = frameBuffer[byteIndex]
-                    // No flipByte call, use sourceByte directly
                     
                     let pixelOn = (sourceByte & mask) != 0
                     if pixelOn {
-                        // Calculate position for scaled drawing
                         let cgX = CGFloat(col * scale)
-                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale) // Top-down physical row calculation
+                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale)
 
-                        let rectX = cgX + insetCorrection
-                        let rectY = cgY + insetCorrection
-                        let rectSide = pixelBlockSize - (2 * insetCorrection) // Pixel is square
+                        let rectX = cgX + inset
+                        let rectY = cgY + inset
+                        let rectSide = pixelBlockSize - (2 * inset)
 
                         if rectSide > 0 {
-                            context.fill(CGRect(
-                                x: rectX,
-                                y: rectY,
-                                width: rectSide,
-                                height: rectSide
-                            ))
-                        } else if !isPixelGridMode {  // Fallback for non-grid mode
-                             context.fill(CGRect(
-                                 x: cgX,
-                                 y: cgY,
-                                 width: pixelBlockSize,
-                                 height: pixelBlockSize
-                             ))
+                            context.fill(CGRect(x: rectX, y: rectY, width: rectSide, height: rectSide))
+                        } else if !isPixelGridMode {
+                            context.fill(CGRect(x: cgX, y: cgY, width: pixelBlockSize, height: pixelBlockSize))
                         }
                     }
                 }
@@ -332,7 +325,7 @@ struct DelugeScreenView: View {
         let screenHeight: Int
         let blocksHigh: Int
 
-        // flipByte function (still unused by this rendering logic)
+        // flipByte function (not used in this rendering logic)
         private func flipByte(_ byte: UInt8) -> UInt8 {
             var flipped: UInt8 = 0
             for i in 0..<8 {
@@ -361,14 +354,23 @@ struct DelugeScreenView: View {
                     case .high: tempRadius = baseHigh
                     default: tempRadius = baseMedium
                     }
-                    return tempRadius * (canvasPixelWidth / 2.0)
+                    return tempRadius * (min(canvasPixelWidth, canvasPixelHeight) / 2.0)
                 }()
 
-                Canvas { context, size in // size here will be drawWidth, drawHeight
-                    let backgroundColor = Color(midiManager.displayColorMode == .normal ? .black : .white)
-                    let foregroundColor = Color(midiManager.displayColorMode == .normal ? .white : .black)
+                // Use explicit name 'graphicsContext'
+                Canvas { graphicsContext, size in
+                    // Explicitly define SwiftUI Colors
+                    let swiftBackgroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .black : .white)
+                    let swiftForegroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .white : .black)
 
-                    context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(backgroundColor))
+                    // Explicitly define Shading
+                    let backgroundShading: GraphicsContext.Shading = GraphicsContext.Shading.color(swiftBackgroundColor)
+                    let foregroundShading: GraphicsContext.Shading = GraphicsContext.Shading.color(swiftForegroundColor)
+
+                    // Fill background
+                    let backgroundRect: CGRect = CGRect(origin: .zero, size: size)
+                    let backgroundPath: Path = Path(backgroundRect)
+                    graphicsContext.fill(backgroundPath, with: backgroundShading)
                     
                     let currentFrameBuffer = midiManager.frameBuffer
                     guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == screenWidth * blocksHigh else {
@@ -376,22 +378,39 @@ struct DelugeScreenView: View {
                     }
 
                     let isPixelGridMode = midiManager.oledPixelGridModeEnabled
-                    let inset: CGFloat = isPixelGridMode ? 0.5 : 0.0
+                    
+                    var hInset: CGFloat = 0.0
+                    var vInset: CGFloat = 0.0
 
+                    // Inset calculation (using last working logic)
+                    if isPixelGridMode {
+                        let targetLitProportion: CGFloat = 0.78
+                        let minPhysicalGapPoints: CGFloat = 0.70
+
+                        let desiredLitW = canvasPixelWidth * targetLitProportion
+                        let initialGapW = canvasPixelWidth - desiredLitW
+                        let finalGapW = max(minPhysicalGapPoints, initialGapW)
+                        hInset = max(0, finalGapW / 2.0)
+
+                        let desiredLitH = canvasPixelHeight * targetLitProportion
+                        let initialGapH = canvasPixelHeight - desiredLitH
+                        let finalGapH = max(minPhysicalGapPoints, initialGapH)
+                        vInset = max(0, finalGapH / 2.0)
+                    }
+                    
+                    // Pixel drawing loop
                     for blk in 0..<blocksHigh {
                         for rowInBlock in 0..<8 {
                             let mask = UInt8(1 << rowInBlock)
                             for col in 0..<screenWidth {
-                                
                                 let srcCol = col
                                 let srcBlk = blk
-                                
                                 let byteIndex = srcBlk * screenWidth + srcCol
+                                
                                 guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
                                 
                                 let sourceByte = currentFrameBuffer[byteIndex]
                                 let byteToRender = sourceByte
-                                
                                 let pixelOn = (byteToRender & mask) != 0
                                 
                                 if pixelOn {
@@ -399,28 +418,28 @@ struct DelugeScreenView: View {
                                     let physicalRow = blk * 8 + rowInBlock
                                     let canvasY = CGFloat(physicalRow) * canvasPixelHeight
 
-                                    let rectX = canvasX + inset
-                                    let rectY = canvasY + inset
-                                    let rectWidth = max(0, canvasPixelWidth - (2 * inset))
-                                    let rectHeight = max(0, canvasPixelHeight - (2 * inset))
+                                    let rectX = canvasX + hInset
+                                    let rectY = canvasY + vInset
+                                    let rectWidth = max(0, canvasPixelWidth - (2 * hInset))
+                                    let rectHeight = max(0, canvasPixelHeight - (2 * vInset))
 
                                     if rectWidth > 0 && rectHeight > 0 {
-                                        context.fill(
-                                            Path(CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight)),
-                                            with: .color(foregroundColor)
-                                        )
+                                        // Define CGRect, Path, and fill explicitly
+                                        let pixelRect: CGRect = CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight)
+                                        let pixelPath: Path = Path(pixelRect)
+                                        graphicsContext.fill(pixelPath, with: foregroundShading)
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
+                            } // End col loop
+                        } // End rowInBlock loop
+                    } // End blk loop
+                } // End Canvas closure
                 .blur(radius: oledBlurRadius)
-                .frame(width: drawWidth, height: drawHeight) // Canvas fills the GeometryReader
-            }
+                .frame(width: drawWidth, height: drawHeight)
+            } // End GeometryReader
             .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
-        }
-    }
+        } // End body
+    } // End OLEDViewContent struct
 
     private struct SevenSegmentViewContent: View {
         @EnvironmentObject var midiManager: MIDIManager
