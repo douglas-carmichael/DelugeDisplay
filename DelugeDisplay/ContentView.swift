@@ -58,20 +58,6 @@ struct ContentView: View {
                 .frame(minWidth: 256, minHeight: 96)      // Minimum size for the ZStack
                 .layoutPriority(1)                          // Give display area priority for space
 
-                // if midiManager.isConnected {
-                //     HStack {
-                //         Spacer()
-                //         if midiManager.displayMode == .oled {
-                //             Toggle("Pixel Grid", isOn: $midiManager.oledPixelGridModeEnabled)
-                //                 .foregroundColor(midiManager.displayColorMode == .normal ? .white : .black)
-                //                 .fixedSize()
-                //         }
-                //         Spacer()
-                //     }
-                //     .padding(.horizontal)
-                //     .padding(.bottom, 8)
-                //     .layoutPriority(0)
-                // }
             } // End main content VStack
         } // End root ZStack
         .frame(minWidth: 256, minHeight: 96) 
