@@ -8,15 +8,36 @@
 
 /* Begin PBXFileReference section */
 		A3EF786B2DB7460E003EBE9E /* DelugeDisplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DelugeDisplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3FBC8442DCDA7480014D552 /* DelugeDisplayiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DelugeDisplayiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		A341D1E72DCC6C300000F65E /* Exceptions for "DelugeDisplay" folder in "DelugeDisplay" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				iOSAppDelegate.swift,
 				README.md,
+				SettingsView.swift,
 			);
 			target = A3EF786A2DB7460E003EBE9E /* DelugeDisplay */;
+		};
+		A3FBC8542DCDAB4B0014D552 /* Exceptions for "DelugeDisplay" folder in "DelugeDisplayiOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AboutView.swift,
+				ContentView.swift,
+				DelugeDisplayApp.swift,
+				DelugeFont.swift,
+				DelugeScreenView.swift,
+				DisplayMode.swift,
+				iOSAppDelegate.swift,
+				MIDIManager.swift,
+				RLEDecoder.swift,
+				SettingsView.swift,
+				SevenSegmentDigitView.swift,
+				SevenSegmentDisplayView.swift,
+			);
+			target = A3FBC8432DCDA7480014D552 /* DelugeDisplayiOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -25,14 +46,27 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A341D1E72DCC6C300000F65E /* Exceptions for "DelugeDisplay" folder in "DelugeDisplay" target */,
+				A3FBC8542DCDAB4B0014D552 /* Exceptions for "DelugeDisplay" folder in "DelugeDisplayiOS" target */,
 			);
 			path = DelugeDisplay;
+			sourceTree = "<group>";
+		};
+		A3FBC8452DCDA7480014D552 /* DelugeDisplayiOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DelugeDisplayiOS;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A3EF78682DB7460E003EBE9E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3FBC8412DCDA7480014D552 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -46,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				A3EF786D2DB7460E003EBE9E /* DelugeDisplay */,
+				A3FBC8452DCDA7480014D552 /* DelugeDisplayiOS */,
 				A3EF786C2DB7460E003EBE9E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				A3EF786B2DB7460E003EBE9E /* DelugeDisplay.app */,
+				A3FBC8442DCDA7480014D552 /* DelugeDisplayiOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -83,6 +119,28 @@
 			productReference = A3EF786B2DB7460E003EBE9E /* DelugeDisplay.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A3FBC8432DCDA7480014D552 /* DelugeDisplayiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A3FBC84C2DCDA7490014D552 /* Build configuration list for PBXNativeTarget "DelugeDisplayiOS" */;
+			buildPhases = (
+				A3FBC8402DCDA7480014D552 /* Sources */,
+				A3FBC8412DCDA7480014D552 /* Frameworks */,
+				A3FBC8422DCDA7480014D552 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A3FBC8452DCDA7480014D552 /* DelugeDisplayiOS */,
+			);
+			name = DelugeDisplayiOS;
+			packageProductDependencies = (
+			);
+			productName = DelugeDisplayiOS;
+			productReference = A3FBC8442DCDA7480014D552 /* DelugeDisplayiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -94,6 +152,9 @@
 				LastUpgradeCheck = 1630;
 				TargetAttributes = {
 					A3EF786A2DB7460E003EBE9E = {
+						CreatedOnToolsVersion = 16.3;
+					};
+					A3FBC8432DCDA7480014D552 = {
 						CreatedOnToolsVersion = 16.3;
 					};
 				};
@@ -113,6 +174,7 @@
 			projectRoot = "";
 			targets = (
 				A3EF786A2DB7460E003EBE9E /* DelugeDisplay */,
+				A3FBC8432DCDA7480014D552 /* DelugeDisplayiOS */,
 			);
 		};
 /* End PBXProject section */
@@ -125,10 +187,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A3FBC8422DCDA7480014D552 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A3EF78672DB7460E003EBE9E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3FBC8402DCDA7480014D552 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -316,6 +392,67 @@
 			};
 			name = Release;
 		};
+		A3FBC84D2DCDA7490014D552 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A3FBC84E2DCDA7490014D552 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -333,6 +470,15 @@
 			buildConfigurations = (
 				A3EF78782DB7460F003EBE9E /* Debug */,
 				A3EF78792DB7460F003EBE9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A3FBC84C2DCDA7490014D552 /* Build configuration list for PBXNativeTarget "DelugeDisplayiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A3FBC84D2DCDA7490014D552 /* Debug */,
+				A3FBC84E2DCDA7490014D552 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

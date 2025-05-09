@@ -7,17 +7,114 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 @main
 struct DelugeDisplayApp: App {
+    #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #elseif os(iOS)
+    @UIApplicationDelegateAdaptor(iOSAppDelegate.self) var iOSDelegate
+    #endif
+    
     @StateObject private var midiManager = MIDIManager()
-    // @State private var displayMode: DelugeDisplayMode = .oled
 
     init() {
+        #if os(macOS)
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Pass the single MIDIManager instance to the macOS AppDelegate
+        // This needs to happen after appDelegate is initialized.
+        // Better to do this in onAppear or by making appDelegate observe the StateObject.
+        // For now, let's use onAppear for consistency.
+        #endif
+        #if DEBUG
+        print("DelugeDisplayApp init.")
+        #endif
     }
     
+    @Environment(\.scenePhase) var scenePhase
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environmentObject(midiManager) // This is correct
+                .onAppear {
+                    #if os(macOS)
+                    if appDelegate.midiManager == nil {
+                        appDelegate.midiManager = self.midiManager
+                        #if DEBUG
+                        print("MIDIManager instance passed to macOS AppDelegate from onAppear.")
+                        #endif
+                    }
+                    #elseif os(iOS)
+                    if iOSDelegate.midiManager == nil { 
+                        iOSDelegate.midiManager = self.midiManager 
+                        #if DEBUG
+                        print("MIDIManager instance passed to iOSDelegate from onAppear.")
+                        #endif
+                    }
+                    #endif
+                }
+        }
+        #if os(macOS)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 384, height: 192) 
+        .windowStyle(.automatic)
+        .windowToolbarStyle(.unified)
+        .defaultPosition(.center)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Save Screenshot...") {
+                    if midiManager.isConnected {
+                        DelugeScreenView.saveScreenshotFromCurrentDisplay(midiManager: midiManager)
+                    }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!midiManager.isConnected)
+            }
+            
+            CommandGroup(replacing: .sidebar) { 
+                displayModeMenu
+                Divider()
+                displayColorMenu
+                Divider()
+                zoomControls
+                Divider()
+                smoothingControls
+                Divider()
+                pixelGridToggle
+            }
+            
+            CommandMenu("MIDI") {
+                midiPortItems
+            }
+            
+            CommandGroup(replacing: .saveItem) { }
+            CommandGroup(replacing: .appInfo) {
+                 Button("About DelugeDisplay") {
+                     appDelegate.showAboutWindow()
+                 }
+             }
+        }
+        #endif // End of os(macOS) for window modifiers and commands
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            #if os(iOS) 
+            if newPhase == .background {
+                #if DEBUG
+                print("iOS App moving to background. Current MIDI status: \(midiManager.isConnected)")
+                #endif
+            } else if newPhase == .active {
+                #if DEBUG
+                print("iOS App moving to active.")
+                #endif
+            }
+            #endif
+        }
+    }
+
+    #if os(macOS)
     private var midiPortItems: some View {
         Group {
             if midiManager.availablePorts.isEmpty {
@@ -34,7 +131,7 @@ struct DelugeDisplayApp: App {
             Divider()
             
             Button("Rescan MIDI Ports") {
-                midiManager.setupMIDI()
+                midiManager.scanAvailablePorts()
             }
         }
     }
@@ -110,47 +207,5 @@ struct DelugeDisplayApp: App {
             .keyboardShortcut("g", modifiers: .command)
             .disabled(midiManager.displayMode != .oled)
     }
-    
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(midiManager)
-                .frame(minWidth: 192, minHeight: 96) // Consider if this minHeight needs to be 140 as in ContentView or if ContentView's is sufficient
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .windowResizability(.contentMinSize)
-        .defaultSize(width: 384, height: 192) // This is the initial size
-        .windowStyle(.automatic)
-        .windowToolbarStyle(.unified)
-        .defaultPosition(.center)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Save Screenshot...") {
-                    if midiManager.isConnected {
-                        DelugeScreenView.saveScreenshotFromCurrentDisplay(midiManager: midiManager)
-                    }
-                }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!midiManager.isConnected)
-            }
-            
-            CommandGroup(replacing: .sidebar) { // This is the main "View" menu
-                displayModeMenu
-                Divider()
-                displayColorMenu
-                Divider()
-                zoomControls
-                Divider()
-                smoothingControls
-                Divider()
-                pixelGridToggle
-            }
-            
-            CommandMenu("MIDI") {
-                midiPortItems
-            }
-            
-            CommandGroup(replacing: .saveItem) { }
-        }
-    }
+    #endif // End of os(macOS) for menu item views
 }

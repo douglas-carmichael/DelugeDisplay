@@ -1,8 +1,10 @@
+#if os(macOS)
+
 import Cocoa
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    @ObservedObject var midiManager = MIDIManager()
+    var midiManager: MIDIManager? 
     let minWidth: CGFloat = 512  // 128 * 4 in points
     let minHeight: CGFloat = 192  // 48 * 4 in points
     var aboutWindow: NSWindow?
@@ -167,7 +169,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        midiManager.disconnect()
+        midiManager?.disconnect()
     }
     
     @objc func showAboutWindow() {
@@ -195,3 +197,5 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 }
+
+#endif
