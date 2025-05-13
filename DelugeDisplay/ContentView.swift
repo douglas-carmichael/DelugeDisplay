@@ -10,24 +10,44 @@ import CoreMIDI
 
 struct ContentView: View {
     @EnvironmentObject var midiManager: MIDIManager
-    // @State private var screenViewRef: DelugeScreenView? // This might not be easily obtainable now
+    @State private var showingSettingsSheet = false
+    #if os(iOS)
+    @State private var showingScreenshotShareSheet = false
+    // This would ideally be UIImage or Data for UIActivityViewController
+    @State private var screenshotDataForSharing: Data? 
+    #endif
 
-    // If DelugeScreenView.saveScreenshot() is an instance method, we need an instance.
-    // If it's static or on MIDIManager, call it that way.
-    // For now, let's assume DelugeScreenView's instance method is callable via midiManager if it makes sense,
-    // or we call the static one.
-    // The current DelugeScreenView.saveScreenshot() is an instance method.
-    // Let's try calling the static method from DelugeScreenView for now,
-    // as getting a ref to the View struct itself can be tricky.
-    func saveScreenshot() {
-        guard midiManager.isConnected else { return }
-        // Call the static method on DelugeScreenView, passing the midiManager
-        DelugeScreenView.saveScreenshotFromCurrentDisplay(midiManager: midiManager)
-    }
-    
     var body: some View {
+        #if os(iOS)
+        ZStack {
+            mainContent
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        showingSettingsSheet = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .padding(16)
+                }
+                Spacer()
+            }
+            
+        }
+        .sheet(isPresented: $showingSettingsSheet) {
+            SettingsView()
+                .environmentObject(midiManager)
+        }
+        #else
+        // Original content for macOS (no NavigationView or iOS toolbars)
+        mainContent
+        #endif
+    }
+
+    private var mainContent: some View {
         ZStack { // Root ZStack for background color
-            Color(midiManager.displayColorMode == .normal ? .black : .white)
+            Color(midiManager.displayColorMode == .inverted ? .white : .black)
                 .ignoresSafeArea()
             
             VStack(spacing: 0) { // Main content VStack
@@ -48,7 +68,7 @@ struct ContentView: View {
                         GeometryReader { geometryInZStack in
                             DelugeFont.renderText(
                                 "WAITING FOR DELUGE",
-                                color: midiManager.displayColorMode == .normal ? .white : .black
+                                color: midiManager.displayColorMode == .normal ? .white : (midiManager.displayColorMode == .matrix ? Color(red: 0, green: 0.8, blue: 0) : .black)
                             )
                         }
                     }
@@ -62,12 +82,28 @@ struct ContentView: View {
         } // End root ZStack
         .frame(minWidth: 256, minHeight: 96) 
         .onAppear {
-            // midiManager.setupMIDI()
+            // midiManager.setupMIDI() // This is usually handled by MIDIManager's init or port selection logic
         }
     }
-}
 
-#Preview {
-    ContentView()
-        .environmentObject(MIDIManager())
+    #if os(iOS)
+    func generateAndShareScreenshot_iOS() {
+        guard midiManager.isConnected else { return }
+        
+        // --- STUBBED ---
+        // In a real implementation, you would:
+        // 1. Get the image data (e.g., UIImage or raw pixel Data) from DelugeScreenView or SevenSegmentDisplayView.
+        //    This might involve rendering the view to an image, or constructing an image from `frameBuffer`/`sevenSegmentDigits`.
+        //    For example:
+        //    let imageData = DelugeScreenView.getScreenshotData(midiManager: midiManager)
+        //    self.screenshotDataForSharing = imageData
+        //    self.showingScreenshotShareSheet = imageData != nil
+        
+        // For now, we'll just toggle the sheet with a placeholder.
+        self.screenshotDataForSharing = "Placeholder screenshot data".data(using: .utf8) // Simulate some data
+        self.showingScreenshotShareSheet = true
+        print("iOS: Attempting to generate and share screenshot (currently stubbed).")
+        // --- END STUB ---
+    }
+    #endif
 }

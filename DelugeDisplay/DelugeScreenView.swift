@@ -1,6 +1,9 @@
 import SwiftUI
 import OSLog
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct DelugeScreenView: View {
     @EnvironmentObject var midiManager: MIDIManager
@@ -41,6 +44,9 @@ struct DelugeScreenView: View {
         case .inverted:
             backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
             foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        case .matrix:
+            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+            foregroundColor = CGColor(red: 0, green: 0.8, blue: 0, alpha: 1.0)
         }
         
         context.setFillColor(backgroundColor)
@@ -144,6 +150,9 @@ struct DelugeScreenView: View {
         case .inverted:
             backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
             foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        case .matrix:
+            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+            foregroundColor = CGColor(red: 0, green: 0.8, blue: 0, alpha: 1.0)
         }
         
         context.setFillColor(backgroundColor)
@@ -204,6 +213,7 @@ struct DelugeScreenView: View {
         return context.makeImage()
     }
     
+    #if os(macOS)
     static func saveScreenshotFromCurrentDisplay(midiManager: MIDIManager) {
         let localLogger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView.StaticSave")
         var image: CGImage? = nil
@@ -236,6 +246,7 @@ struct DelugeScreenView: View {
             let sevenSegmentView = SevenSegmentDisplayView(availableSize: screenshotSize)
                 .environmentObject(midiManager)
                 .frame(width: screenshotSize.width, height: screenshotSize.height)
+            
             let renderer = ImageRenderer(content: sevenSegmentView)
             renderer.scale = 2.0
             
@@ -280,37 +291,45 @@ struct DelugeScreenView: View {
                     #if DEBUG
                     localLogger.error("Failed to save screenshot")
                     #endif
+                } else {
+                    #if DEBUG
+                    localLogger.info("Screenshot saved to \(url.path)")
+                    #endif
                 }
             }
         }
     }
+    #endif // os(macOS) for static saveScreenshotFromCurrentDisplay
         
-    func saveScreenshot() {
+    #if os(macOS)
+    func saveScreenshot() { 
         guard midiManager.displayMode == .oled else {
             #if DEBUG
-            logger.info("Screenshot currently only supported for OLED display mode.")
+            logger.info("Instance saveScreenshot() currently only supported for OLED display mode.")
             #endif
             return
         }
         guard let image = createImage(width: screenWidth, height: screenHeight, scale: 4) else {
             #if DEBUG
-            logger.error("Failed to create image for screenshot")
+            logger.error("Failed to create image for instance screenshot")
             #endif
             return
         }
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let timestamp = dateFormatter.string(from: Date())
-        let filename = "DelugeDisplay_OLED_\(timestamp).png"
+        let filename = "DelugeDisplay_OLED_\(timestamp).png" // Filename implies OLED
+        
         let savePanel = NSSavePanel()
         savePanel.nameFieldStringValue = filename
         savePanel.allowedContentTypes = [UTType.png]
         savePanel.canCreateDirectories = true
+        
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
                 guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
                     #if DEBUG
-                    logger.error("Failed to create image destination")
+                    logger.error("Failed to create image destination for instance screenshot")
                     #endif
                     return
                 }
@@ -318,20 +337,24 @@ struct DelugeScreenView: View {
                 CGImageDestinationAddImage(destination, image, properties as CFDictionary)
                 if !CGImageDestinationFinalize(destination) {
                     #if DEBUG
-                    logger.error("Failed to save screenshot")
+                    logger.error("Failed to save instance screenshot")
+                    #endif
+                } else {
+                    #if DEBUG
+                    logger.info("Instance screenshot saved to \(url.path)")
                     #endif
                 }
             }
         }
     }
-    
+    #endif // os(macOS) for instance saveScreenshot
+
     private struct OLEDViewContent: View {
         @EnvironmentObject var midiManager: MIDIManager
         let screenWidth: Int
         let screenHeight: Int
         let blocksHigh: Int
 
-        // flipByte function (not used in this rendering logic)
         private func flipByte(_ byte: UInt8) -> UInt8 {
             var flipped: UInt8 = 0
             for i in 0..<8 {
@@ -363,17 +386,13 @@ struct DelugeScreenView: View {
                     return tempRadius * (min(canvasPixelWidth, canvasPixelHeight) / 2.0)
                 }()
 
-                // Use explicit name 'graphicsContext'
                 Canvas { graphicsContext, size in
-                    // Explicitly define SwiftUI Colors
-                    let swiftBackgroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .black : .white)
-                    let swiftForegroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .white : .black)
+                    let swiftBackgroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .inverted ? .white : .black)
+                    let swiftForegroundColor: SwiftUI.Color = midiManager.displayColorMode == .normal ? .white : (midiManager.displayColorMode == .matrix ? Color(red: 0, green: 0.8, blue: 0) : .black)
 
-                    // Explicitly define Shading
                     let backgroundShading: GraphicsContext.Shading = GraphicsContext.Shading.color(swiftBackgroundColor)
                     let foregroundShading: GraphicsContext.Shading = GraphicsContext.Shading.color(swiftForegroundColor)
 
-                    // Fill background
                     let backgroundRect: CGRect = CGRect(origin: .zero, size: size)
                     let backgroundPath: Path = Path(backgroundRect)
                     graphicsContext.fill(backgroundPath, with: backgroundShading)
@@ -388,7 +407,6 @@ struct DelugeScreenView: View {
                     var hInset: CGFloat = 0.0
                     var vInset: CGFloat = 0.0
 
-                    // Inset calculation (using last working logic)
                     if isPixelGridMode {
                         let targetLitProportion: CGFloat = 0.78
                         let minPhysicalGapPoints: CGFloat = 0.70
@@ -404,7 +422,6 @@ struct DelugeScreenView: View {
                         vInset = max(0, finalGapH / 2.0)
                     }
                     
-                    // Pixel drawing loop
                     for blk in 0..<blocksHigh {
                         for rowInBlock in 0..<8 {
                             let mask = UInt8(1 << rowInBlock)
@@ -430,22 +447,21 @@ struct DelugeScreenView: View {
                                     let rectHeight = max(0, canvasPixelHeight - (2 * vInset))
 
                                     if rectWidth > 0 && rectHeight > 0 {
-                                        // Define CGRect, Path, and fill explicitly
                                         let pixelRect: CGRect = CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight)
                                         let pixelPath: Path = Path(pixelRect)
                                         graphicsContext.fill(pixelPath, with: foregroundShading)
                                     }
                                 }
-                            } // End col loop
-                        } // End rowInBlock loop
-                    } // End blk loop
-                } // End Canvas closure
+                            } 
+                        } 
+                    } 
+                } 
                 .blur(radius: oledBlurRadius)
                 .frame(width: drawWidth, height: drawHeight)
-            } // End GeometryReader
-            .background(midiManager.displayColorMode == .normal ? Color.black : Color.white)
-        } // End body
-    } // End OLEDViewContent struct
+            } 
+            .background(midiManager.displayColorMode == .inverted ? Color.white : Color.black)
+        }
+    } 
 
     private struct SevenSegmentViewContent: View {
         @EnvironmentObject var midiManager: MIDIManager
