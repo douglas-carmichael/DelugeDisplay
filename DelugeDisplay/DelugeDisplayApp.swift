@@ -49,8 +49,8 @@ struct DelugeDisplayApp: App {
                         #endif
                     }
                     #elseif os(iOS)
-                    if iOSDelegate.midiManager == nil { 
-                        iOSDelegate.midiManager = self.midiManager 
+                    if iOSDelegate.midiManager == nil {
+                        iOSDelegate.midiManager = self.midiManager
                         #if DEBUG
                         print("MIDIManager instance passed to iOSDelegate from onAppear.")
                         #endif
@@ -60,7 +60,7 @@ struct DelugeDisplayApp: App {
         }
         #if os(macOS)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 384, height: 192) 
+        .defaultSize(width: 384, height: 192)
         .windowStyle(.automatic)
         .windowToolbarStyle(.unified)
         .defaultPosition(.center)
@@ -75,7 +75,7 @@ struct DelugeDisplayApp: App {
                 .disabled(!midiManager.isConnected)
             }
             
-            CommandGroup(replacing: .sidebar) { 
+            CommandGroup(replacing: .sidebar) {
                 displayModeMenu
                 Divider()
                 displayColorMenu
@@ -99,8 +99,8 @@ struct DelugeDisplayApp: App {
              }
         }
         #endif // End of os(macOS) for window modifiers and commands
-        .onChange(of: scenePhase) { newPhase in
-            #if os(iOS) 
+        .onChange(of: scenePhase) { _, newPhase in
+            #if os(iOS)
             if newPhase == .background {
                 #if DEBUG
                 print("iOS App moving to background. Current MIDI status: \(midiManager.isConnected)")
