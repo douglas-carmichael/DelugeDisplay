@@ -6,6 +6,8 @@ import OSLog
 @MainActor
 class MIDIManager: ObservableObject {
     @Published var isConnected = false // UI
+    @Published var lastFrameBuffer: [UInt8] = [] // UI
+    @Published var lastFrameBufferIsSet = false // UI
     @Published var frameBuffer: [UInt8] = [] // UI
     @Published var sevenSegmentDigits: [UInt8] = [0, 0, 0, 0] // UI
     @Published var sevenSegmentDots: UInt8 = 0 // UI
@@ -208,9 +210,20 @@ class MIDIManager: ObservableObject {
     private var isSettingInitialMode: Bool = false
     private var initialProbeCompletedOrModeSet: Bool = false
 
-    struct MIDIPort: Identifiable {
-        let id: MIDIEndpointRef
-        let name: String
+    struct MIDIPort: Identifiable, Hashable /* Equatable is synthesized by Hashable if all members are Equatable, or id can be used */ {
+        let id: MIDIEndpointRef // MIDIEndpointRef is UInt32, which is Hashable
+        let name: String        // String is Hashable
+
+        // Explicit Equatable conformance (optional if synthesized is sufficient, but good for clarity with Identifiable)
+        static func == (lhs: MIDIManager.MIDIPort, rhs: MIDIManager.MIDIPort) -> Bool {
+            return lhs.id == rhs.id
+        }
+
+        // Hashable conformance can be synthesized by the compiler if all members are Hashable.
+        // If explicit hashing is needed:
+        // func hash(into hasher: inout Hasher) {
+        //     hasher.combine(id)
+        // }
     }
     
     private var updateTimer: Timer?
@@ -282,16 +295,81 @@ class MIDIManager: ObservableObject {
     
     deinit {
         #if DEBUG
-        logger.info("MIDIManager deinit: Cleanup should ideally have happened via explicit disconnect().")
+        logger.info("MIDIManager deinit: Explicit disconnect() should have been called prior to deinitialization to release MIDI resources.")
         #endif
+        // DO NOT call self.disconnect() here due to actor isolation.
+        // All necessary cleanup of MIDI resources (ports, client)
+        // must be handled by an explicit call to disconnect() from a @MainActor context
+        // before this MIDIManager instance is deinitialized.
     }
     
+    func disconnect() {
+        let portNameToLog = self.lastSelectedPortName ?? "unknown"
+        #if DEBUG
+        logger.info("MIDIManager.disconnect() called for port: \(portNameToLog). Current connection status: \(self.isConnected)")
+        #endif
+        
+        connectionTimer?.invalidate()
+        connectionTimer = nil
+        updateTimer?.invalidate()
+        updateTimer = nil
+        probeTimer?.invalidate()
+        probeTimer = nil
+        
+        if let currentInput = self.delugeInput, self.inputPort != 0 {
+            _ = MIDIPortDisconnectSource(self.inputPort, currentInput)
+            #if DEBUG
+            // logger.debug("Disconnected source for port \(portNameToLog).")
+            #endif
+        }
+        self.delugeInput = nil
+        
+        if self.inputPort != 0 {
+            _ = MIDIPortDispose(self.inputPort)
+            #if DEBUG
+            // logger.debug("Disposed input port.")
+            #endif
+            self.inputPort = 0
+        }
+        if self.outputPort != 0 {
+            _ = MIDIPortDispose(self.outputPort)
+            #if DEBUG
+            // logger.debug("Disposed output port.")
+            #endif
+            self.outputPort = 0
+        }
+        
+        self.delugeOutput = nil
+        
+        if self.client != 0 {
+            _ = MIDIClientDispose(self.client)
+            #if DEBUG
+            // logger.debug("Disposed MIDI client.")
+            #endif
+            self.client = 0
+        }
+        
+        if self.isConnected {
+            self.isConnected = false
+        }
+        if self.isWaitingForConnection {
+            self.isWaitingForConnection = false
+        }
+        
+        self.isSettingInitialMode = false
+        self.hasAttemptedSevenSegmentProbe = false
+        self.initialProbeCompletedOrModeSet = false
+        #if DEBUG
+        logger.info("MIDIManager.disconnect() finished.")
+        #endif
+    }
+
     func setupMIDI() {
         var status = MIDIClientCreateWithBlock("DelugeDisplay" as CFString, &client) { [weak self] notificationPtr in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 let now = Date()
-                if now.timeIntervalSince(self.lastScanTime) >= self.minimumScanInterval {
+                if now.timeIntervalSince(self.lastScanTime) >= self.minimumPortScanInterval {
                     #if DEBUG
                     self.logger.info("MIDI system changed - rescanning ports. Notification: \(notificationPtr.pointee.messageID.rawValue)")
                     #endif
@@ -319,7 +397,31 @@ class MIDIManager: ObservableObject {
         }
         
         status = MIDIInputPortCreateWithBlock(client, "Input" as CFString, &inputPort) { [weak self] packetList, _ in
-            self?.handleMIDIPacketList(packetList.pointee)
+            // Synchronously copy all packets to arrays
+            guard let strongSelf = self else { return }
+            var packets: [[UInt8]] = []
+            var packetPtr = UnsafeMutablePointer(mutating: withUnsafePointer(to: packetList.pointee.packet) {
+                UnsafeRawPointer($0).assumingMemoryBound(to: MIDIPacket.self)
+            })
+            for _ in 0..<packetList.pointee.numPackets {
+                let packet = packetPtr.pointee
+                let length = Int(packet.length)
+                if length > 0, length <= strongSelf.maxSysExSize {
+                    let bytes: [UInt8] = withUnsafeBytes(of: packet.data) { rawBufferPtr in
+                        Array(rawBufferPtr.prefix(length))
+                    }
+                    packets.append(bytes)
+                }
+                packetPtr = MIDIPacketNext(packetPtr)
+            }
+            // Now, process the copied data asynchronously
+            for bytes in packets {
+                strongSelf.processQueue.async { [weak self] in
+                    Task { @MainActor in
+                        self?.processSingleMIDIMessageOnBackgroundQueue(bytes)
+                    }
+                }
+            }
         }
         guard status == noErr else {
             #if DEBUG
@@ -340,19 +442,58 @@ class MIDIManager: ObservableObject {
         startConnectionTimer()
     }
     
-    private func scanAvailablePorts() {
+    func scanAvailablePorts() {
+        // MARK: - MIDI Port Scanning and Management
+        // func setupMIDI() { ... } // Existing function
+
+        #if DEBUG
+        self.logger.debug("--- DUMPING ALL MIDI SOURCES (Inputs) ---")
+        let numSources = MIDIGetNumberOfSources()
+        if numSources == 0 {
+            self.logger.debug("No MIDI sources found.")
+        } else {
+            for i in 0..<numSources {
+                let endpoint = MIDIGetSource(i)
+                var nameCF: Unmanaged<CFString>?
+                MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
+                // Use takeRetainedValue() as per Apple's documentation for MIDIObjectGetStringProperty
+                let name = nameCF?.takeRetainedValue() as String? ?? "(Unnamed Source)"
+                self.logger.debug("Source Port \(i): \"\(name)\" (ID: \(endpoint))")
+            }
+        }
+        self.logger.debug("--- END DUMPING MIDI SOURCES ---")
+
+        self.logger.debug("--- DUMPING ALL MIDI DESTINATIONS (Outputs) ---")
+        let numDestinations = MIDIGetNumberOfDestinations()
+        if numDestinations == 0 {
+            self.logger.debug("No MIDI destinations found.")
+        } else {
+            for i in 0..<numDestinations {
+                let endpoint = MIDIGetDestination(i)
+                var nameCF: Unmanaged<CFString>?
+                MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
+                let name = nameCF?.takeRetainedValue() as String? ?? "(Unnamed Destination)"
+                self.logger.debug("Destination Port \(i): \"\(name)\" (ID: \(endpoint))")
+            }
+        }
+        self.logger.debug("--- END DUMPING MIDI DESTINATIONS ---")
+        #endif
+        // End of ADD section
+
         var localPorts: [MIDIPort] = []
         var portToAutoSelect: MIDIPort? = nil
         var portToReSelect: MIDIPort? = nil
         
         #if DEBUG
-        logger.debug("Scanning for available MIDI ports (now on MainActor)...")
+        logger.debug("Scanning for available MIDI ports to populate UI list (now on MainActor)...")
         #endif
-        for i in 0..<MIDIGetNumberOfDestinations() {
+        // and use takeRetainedValue() for the name.
+        for i in 0..<MIDIGetNumberOfDestinations() { // This loop populates 'availablePorts' for the UI
             let endpoint = MIDIGetDestination(i)
-            var name: Unmanaged<CFString>?
-            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &name)
-            if let n = name?.takeUnretainedValue() as String? {
+            var nameCF: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
+            // Use takeRetainedValue() here as well, as MIDIObjectGetStringProperty returns a retained string.
+            if let n = nameCF?.takeRetainedValue() as String? {
                 let currentPort = MIDIPort(id: endpoint, name: n)
                 localPorts.append(currentPort)
                 if !self.delugePortName.isEmpty && n.contains(self.delugePortName) && self.selectedPort == nil && self.lastSelectedPortName == nil && portToAutoSelect == nil {
@@ -362,6 +503,7 @@ class MIDIManager: ObservableObject {
                     portToReSelect = currentPort
                 }
             }
+            // nameCF is an Unmanaged<CFString>?. takeRetainedValue() correctly handles its memory management when converting to Swift String.
         }
             
         let oldAvailablePorts = self.availablePorts.map { $0.name }.sorted()
@@ -575,45 +717,35 @@ class MIDIManager: ObservableObject {
     }
 
     private func startUpdateTimer(forExplicitMode modeToUse: DelugeDisplayMode, generation: Int) {
-        guard !isSettingInitialMode else {
-            #if DEBUG
-            logger.debug("Deferring start of update timer: isSettingInitialMode is still true.")
-            #endif
-            return
-        }
-        
-        if let existingTimer = self.updateTimer {
-            existingTimer.invalidate()
-        }
-        self.updateTimer = nil
-        
+        updateTimer?.invalidate()
+
         let modeForThisTimer = modeToUse
-        // Capture the passed 'generation'
         let capturedGenerationForTimer = generation
-        #if DEBUG
-        logger.debug("Starting regular display update timer for mode: \(modeForThisTimer.rawValue) with interval \(self.updateInterval)s. Generation: \(capturedGenerationForTimer)")
-        #endif
+
+        let interval: TimeInterval = self.minimumScreenDeltaScanInterval
         
-        let newTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] timerThatFired in
-            // Capture 'capturedGenerationForTimer'
+        let newTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timerThatFired in
+            // Capture necessary values for the Task
+            // modeForThisTimer and capturedGenerationForTimer are available from the outer scope.
             Task { @MainActor [weak self, weak timerThatFired, capturedGeneration = capturedGenerationForTimer] in
                 guard let strongSelf = self, let strongTimerThatFired = timerThatFired else {
                     return
                 }
 
-                #if DEBUG
-                strongSelf.logger.error("TIMER TASK ENTRY --- CapturedGen: \(capturedGeneration), CurrentGen: \(strongSelf.displayLogicGeneration), CapturedMode: \(modeForThisTimer.rawValue), CurrentMode: \(strongSelf.displayMode.rawValue), TimerValid: \(strongTimerThatFired.isValid)")
-                #endif
-
-                // PRIMARY GUARD: Check generation AND timer identity (belt and suspenders)
-                if strongSelf.displayLogicGeneration == capturedGeneration && strongSelf.updateTimer === strongTimerThatFired && strongTimerThatFired.isValid {
-                    strongSelf.requestDisplayDataIfNecessary(forMode: modeForThisTimer) // modeForThisTimer should be inherently correct if generation matches
+                // These checks are crucial to ensure only the correct timer instance acts
+                if strongSelf.displayLogicGeneration == capturedGeneration &&
+                   strongSelf.updateTimer === strongTimerThatFired &&
+                   strongTimerThatFired.isValid {
+                    #if DEBUG
+                    strongSelf.logger.debug("Timer task: Requesting data for \(modeForThisTimer.rawValue). Generation: \(capturedGeneration).")
+                    #endif
+                    strongSelf.requestDisplayDataIfNecessary(forMode: modeForThisTimer)
                 } else {
+                    #if DEBUG
                     var reason = ""
-                    if strongSelf.displayLogicGeneration != capturedGeneration { reason += "GenerationMismatch (Expected:\(strongSelf.displayLogicGeneration),Got:\(capturedGeneration));" }
+                    if strongSelf.displayLogicGeneration != capturedGeneration { reason += "GenerationMismatch (Expected:\(capturedGeneration),Got:\(strongSelf.displayLogicGeneration));" }
                     if strongSelf.updateTimer !== strongTimerThatFired { reason += "NotCurrentTimerInstance;" }
                     if !strongTimerThatFired.isValid { reason += "TimerInstanceNotValid;" }
-                    #if DEBUG
                     strongSelf.logger.notice("Ignored timer callback. Reason: \(reason). Originally for mode: \(modeForThisTimer.rawValue).")
                     #endif
                 }
@@ -629,10 +761,13 @@ class MIDIManager: ObservableObject {
             #endif
             return
         }
-        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval
+
+        let currentModeInterval: TimeInterval = self.minimumScreenDeltaScanInterval
+    
+        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > currentModeInterval
         
         if shouldRequest {
-            self.requestDisplayData(forMode: mode)
+            self.requestDisplayDelta()
         }
     }
     
@@ -661,6 +796,18 @@ class MIDIManager: ObservableObject {
         self.sendSysEx(sysExCommand)
     }
     
+    private func requestDisplayDelta() {
+        guard self.isConnected || self.isWaitingForConnection || self.isSettingInitialMode else {
+            #if DEBUG
+            self.logger.debug("Skipping data request: Not connected, not waiting for connection, and not in initial mode setting.")
+            #endif
+            return
+        }
+
+        let sysExCommand = self.lastFrameBufferIsSet ? self.sysExRequestDisplay: self.sysExRequestDisplayForce
+        self.sendSysEx(sysExCommand)
+    }
+    
     private func sendDisplayToggleCommand() {
         let command = self.sysExToggleDisplayScreen
         
@@ -672,6 +819,9 @@ class MIDIManager: ObservableObject {
     
     private func sendSysEx(_ data: [UInt8]) {
         guard let output = delugeOutput else {
+            #if DEBUG
+            logger.warning("sendSysEx: Deluge output endpoint is nil. Cannot send.")
+            #endif
             return
         }
         
@@ -685,6 +835,11 @@ class MIDIManager: ObservableObject {
                               data.count,
                               data)
         
+        #if DEBUG
+        let commandType = (data == sysExRequestOLED) ? "OLED Req" : (data == sysExRequestSevenSegment) ? "7Seg Req" : (data == sysExToggleDisplayScreen) ? "Toggle Req" : "Other SysEx"
+        logger.debug("sendSysEx: Attempting to send \(commandType): \(data.map { String(format: "%02X", $0) })")
+        #endif
+
         let sendStatus: OSStatus = MIDISend(outputPort, output, &packetList)
         
         if sendStatus != noErr {
@@ -698,6 +853,8 @@ class MIDIManager: ObservableObject {
         #if DEBUG
         logger.debug("Clearing frame buffer.")
         #endif
+        self.lastFrameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+        self.lastFrameBufferIsSet = false
         self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
     }
     
@@ -762,57 +919,6 @@ class MIDIManager: ObservableObject {
             }
         }
     }
-    
-    private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
-        var listCopy = packetList // Work with a mutable copy
-
-        guard listCopy.numPackets > 0 else {
-            return
-        }
-
-        withUnsafePointer(to: &listCopy.packet) { firstPacketPointer in
-            var pCurrentPacket: UnsafePointer<MIDIPacket> = firstPacketPointer
-
-            for i in 0 ..< Int(listCopy.numPackets) {
-                let packet = pCurrentPacket.pointee
-            
-                let length = Int(packet.length)
-                guard length > 0, length <= self.maxSysExSize else {
-                    Task { @MainActor [weak self, length] in
-                        self?.logger.error("Received MIDI packet with invalid length (\(length)). Flushing buffer.")
-                        self?.sysExBuffer.removeAll()
-                        self?.isProcessingSysEx = false
-                    }
-                    if i < Int(listCopy.numPackets) - 1 {
-                        let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
-                        pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
-                    }
-                    continue
-                }
-            
-                var bytesArray = [UInt8](repeating: 0, count: length)
-                withUnsafeBytes(of: packet.data) { rawBufferPtr in
-                    let sourcePtr = rawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                    bytesArray.withUnsafeMutableBytes { destRawBufferPtr in
-                        let destPtr = destRawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                        destPtr.initialize(from: sourcePtr, count: length)
-                    }
-                }
-            
-                let capturedBytesArray = bytesArray
-                processQueue.async { [weak self, capturedBytesArray] in
-                    Task { @MainActor in
-                        self?.processSingleMIDIMessageOnBackgroundQueue(capturedBytesArray)
-                    }
-                }
-            
-                if i < Int(listCopy.numPackets) - 1 {
-                    let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
-                    pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
-                }
-            }
-        }
-    }
 
     private func processSingleMIDIMessageOnBackgroundQueue(_ bytes: [UInt8]) {
         Task { @MainActor [weak self, bytes] in
@@ -852,13 +958,15 @@ class MIDIManager: ObservableObject {
         let wasConnectedInitially = self.isConnected
         var dataReceived = false
         
-        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
+        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x01 && bytes.last == 0xf7 { // OLED
             do {
                 self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
                 self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
                 
-                if unpacked.count == self.expectedFrameSize { 
+                if unpacked.count == self.expectedFrameSize {
+                    self.lastFrameBuffer = unpacked
+                    self.lastFrameBufferIsSet = true
                     self.frameBuffer = unpacked
                 } else {
                     self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
@@ -877,6 +985,27 @@ class MIDIManager: ObservableObject {
                 #if DEBUG
                 logger.error("Error unpacking OLED data: \(error.localizedDescription)")
                 #endif
+            }
+        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 { // OLED DELTA
+            do {
+                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
+                let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
+                self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count).")
+                
+                let firstByteChanged: Int = Int(bytes[5]) * 8
+                self.logger.debug("First byte changed: \(firstByteChanged).")
+                
+                if (firstByteChanged + unpacked.count <= self.expectedFrameSize) {
+                    self.frameBuffer.replaceSubrange(firstByteChanged..<(firstByteChanged + unpacked.count), with: unpacked)
+                    self.lastFrameBuffer = self.frameBuffer
+                } else {
+                    self.logger.error("Received OLED data size (\(unpacked.count)) does not match maximum expected (\(self.expectedFrameSize)). Clearing buffer.")
+                    self.clearFrameBuffer()
+                }
+            } catch {
+#if DEBUG
+                logger.error("Error unpacking OLED data: \(error.localizedDescription)")
+#endif
             }
         } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 { // 7-Seg
             self.sevenSegmentDots = bytes[6]
@@ -901,81 +1030,20 @@ class MIDIManager: ObservableObject {
         }
     }
 
-    func disconnect() {
-        let portNameToLog = self.lastSelectedPortName ?? "unknown"
-        if self.isConnected {
-            #if DEBUG
-            logger.info("Disconnecting from Deluge on port: \(portNameToLog)")
-            #endif
-        } else {
-            #if DEBUG
-            logger.info("Ensuring MIDI resources are released for port: \(portNameToLog)")
-            #endif
-        }
-        
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        updateTimer?.invalidate()
-        updateTimer = nil
-        probeTimer?.invalidate()
-        probeTimer = nil
-        
-        if let currentInput = self.delugeInput, self.inputPort != 0 {
-            MIDIPortDisconnectSource(self.inputPort, currentInput)
-            #if DEBUG
-            logger.debug("Disconnected source for port \(portNameToLog).")
-            #endif
-        }
-        
-        if self.inputPort != 0 {
-            MIDIPortDispose(self.inputPort)
-            self.inputPort = 0
-            #if DEBUG
-            logger.debug("Disposed input port.")
-            #endif
-        }
-        if self.outputPort != 0 {
-            MIDIPortDispose(self.outputPort)
-            self.outputPort = 0
-            #if DEBUG
-            logger.debug("Disposed output port.")
-            #endif
-        }
-        if self.client != 0 {
-            self.client = 0
-            #if DEBUG
-            logger.debug("Nullified MIDI client reference. MIDIClientDispose should be called if client was created.")
-            #endif
-        }
-        
-        self.delugeInput = nil
-        self.delugeOutput = nil
-        
-        self.isConnected = false
-        self.isWaitingForConnection = false
-        clearFrameBuffer()
-        clearSevenSegmentData()
-        
-        self.isSettingInitialMode = false
-        self.hasAttemptedSevenSegmentProbe = false
-        self.initialProbeCompletedOrModeSet = false
-    }
-    
     private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
     private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
-    private let expectedFrameSize = 768 
+    private let expectedFrameSize = 768
     private let expectedSevenSegmentDataLength = 5
     private let frameTimeout: TimeInterval = 0.2
     private let maxDeltaFails = 3
-    private let maxSysExSize = 1024 * 32 
+    private let maxSysExSize = 1024 * 32
     private let screenWidth = 128
     private let screenHeight = 48
-    private let bytesPerRow = 128 
+    private let bytesPerRow = 128
     private let numRows = 6
     private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
     private let delugePortName = ""
     private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
-    private let updateInterval: TimeInterval = 0.05
     private var client: MIDIClientRef = 0
     private var inputPort: MIDIPortRef = 0
     private var outputPort: MIDIPortRef = 0
@@ -986,8 +1054,11 @@ class MIDIManager: ObservableObject {
     private var lastPacketTime = Date()
     private var isProcessingSysEx = false
     private var lastScanTime: Date = Date()
-    private let minimumScanInterval: TimeInterval = 1.0
+    private let minimumScreenDeltaScanInterval: TimeInterval = 0.05
+    private let minimumPortScanInterval: TimeInterval = 5.0
     private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
+    private let sysExRequestDisplay: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
+    private let sysExRequestDisplayForce: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x03, 0xf7]
     private let sysExRequestSevenSegment: [UInt8] = [0xf0, 0x7d, 0x02, 0x01, 0x00, 0xf7]
     private let sysExToggleDisplayScreen: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x04, 0xf7]
     private var probeTimer: Timer?
