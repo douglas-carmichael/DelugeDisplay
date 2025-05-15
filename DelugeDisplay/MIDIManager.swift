@@ -9,6 +9,7 @@ class MIDIManager: ObservableObject {
     @Published var lastFrameBuffer: [UInt8] = [] // UI
     @Published var lastFrameBufferIsSet = false // UI
     @Published var frameBuffer: [UInt8] = [] // UI
+    @Published var oledFrameUpdateID: UUID = UUID() // UI
     @Published var sevenSegmentDigits: [UInt8] = [0, 0, 0, 0] // UI
     @Published var sevenSegmentDots: UInt8 = 0 // UI
     @Published var smoothingEnabled: Bool {
@@ -492,7 +493,6 @@ class MIDIManager: ObservableObject {
             let endpoint = MIDIGetDestination(i)
             var nameCF: Unmanaged<CFString>?
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
-            // Use takeRetainedValue() here as well, as MIDIObjectGetStringProperty returns a retained string.
             if let n = nameCF?.takeRetainedValue() as String? {
                 let currentPort = MIDIPort(id: endpoint, name: n)
                 localPorts.append(currentPort)
@@ -856,6 +856,7 @@ class MIDIManager: ObservableObject {
         self.lastFrameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
         self.lastFrameBufferIsSet = false
         self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+        self.oledFrameUpdateID = UUID()
     }
     
     private func clearSevenSegmentData() {
@@ -968,6 +969,7 @@ class MIDIManager: ObservableObject {
                     self.lastFrameBuffer = unpacked
                     self.lastFrameBufferIsSet = true
                     self.frameBuffer = unpacked
+                    self.oledFrameUpdateID = UUID()
                 } else {
                     self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
                     self.clearFrameBuffer() 
@@ -998,6 +1000,7 @@ class MIDIManager: ObservableObject {
                 if (firstByteChanged + unpacked.count <= self.expectedFrameSize) {
                     self.frameBuffer.replaceSubrange(firstByteChanged..<(firstByteChanged + unpacked.count), with: unpacked)
                     self.lastFrameBuffer = self.frameBuffer
+                    self.oledFrameUpdateID = UUID()
                 } else {
                     self.logger.error("Received OLED data size (\(unpacked.count)) does not match maximum expected (\(self.expectedFrameSize)). Clearing buffer.")
                     self.clearFrameBuffer()

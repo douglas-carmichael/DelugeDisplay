@@ -457,6 +457,7 @@ struct DelugeScreenView: View {
                     } 
                 } 
                 .blur(radius: oledBlurRadius)
+                .id(midiManager.oledFrameUpdateID)
                 .frame(width: drawWidth, height: drawHeight)
             } 
             .background(midiManager.displayColorMode == .inverted ? Color.white : Color.black)
