@@ -57,9 +57,7 @@ struct DelugeScreenView: View {
         let currentFrameBuffer = midiManager.frameBuffer
         
         guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == self.screenWidth * self.blocksHigh else {
-            #if DEBUG
             logger.info("Frame buffer is invalid or empty for createImage.")
-            #endif
             return context.makeImage()
         }
 
