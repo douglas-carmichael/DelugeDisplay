@@ -576,6 +576,8 @@ class MIDIManager: ObservableObject {
         self.isSettingInitialMode = false
         self.initialProbeCompletedOrModeSet = false
         self.hasAttemptedSevenSegmentProbe = false
+        self.isConnected = false
+        self.isWaitingForConnection = true
 
         clearFrameBuffer()
         clearSevenSegmentData()
@@ -642,38 +644,70 @@ class MIDIManager: ObservableObject {
         initialProbeCompletedOrModeSet = false
 
         #if DEBUG
-        logger.info("Probing: Requesting OLED data first.")
+        logger.info("Probing: Sending initial toggle command.")
         #endif
-        sendSysEx(sysExRequestOLED)
+        sendDisplayToggleCommand()
 
-        probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet, !self.hasAttemptedSevenSegmentProbe else {
-                    #if DEBUG
-                    self.logger.debug("Probe timer (OLED) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
-                    #endif
-                    return
-                }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.050) { [weak self] in
+            guard let strongSelf = self else {
+                return
+            }
+            guard strongSelf.isSettingInitialMode, !strongSelf.initialProbeCompletedOrModeSet else {
                 #if DEBUG
-                self.logger.info("Probing: OLED timeout. Requesting 7-Segment data.")
+                strongSelf.logger.debug("Probing (OLED request delay): Skipped, probe no longer active or completed. isSettingInitialMode: \(strongSelf.isSettingInitialMode), initialProbeCompletedOrModeSet: \(strongSelf.initialProbeCompletedOrModeSet)")
                 #endif
-                self.hasAttemptedSevenSegmentProbe = true
-                self.sendSysEx(self.sysExRequestSevenSegment)
+                return
+            }
+            #if DEBUG
+            strongSelf.logger.info("Probing: Requesting OLED data after initial toggle.")
+            #endif
+            strongSelf.sendSysEx(strongSelf.sysExRequestOLED)
 
-                self.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-                    Task { @MainActor [weak self] in
-                        guard let self = self else { return }
-                        guard self.isSettingInitialMode, !self.initialProbeCompletedOrModeSet else {
+            strongSelf.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak strongSelf] _ in
+                Task { @MainActor [weak strongSelf] in
+                    guard let sSelf = strongSelf else { return }
+                    guard sSelf.isSettingInitialMode, !sSelf.initialProbeCompletedOrModeSet, !sSelf.hasAttemptedSevenSegmentProbe else {
+                        #if DEBUG
+                        sSelf.logger.debug("Probe timer (OLED) fired, but probing already completed or mode set or 7-seg attempted. isSettingInitialMode: \(sSelf.isSettingInitialMode), initialProbeCompletedOrModeSet: \(sSelf.initialProbeCompletedOrModeSet), hasAttemptedSevenSegmentProbe: \(sSelf.hasAttemptedSevenSegmentProbe)")
+                        #endif
+                        return
+                    }
+                    #if DEBUG
+                    sSelf.logger.info("Probing: OLED timeout. Sending toggle command before 7-Segment request.")
+                    #endif
+                    sSelf.sendDisplayToggleCommand()
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.050) { [weak sSelf] in
+                        guard let sSelfAgain = sSelf else {
+                            return
+                        }
+                        guard sSelfAgain.isSettingInitialMode, !sSelfAgain.initialProbeCompletedOrModeSet else {
                             #if DEBUG
-                            self.logger.debug("Probe timer (7-Seg) fired, but probing already completed or mode set. isSettingInitialMode: \(self.isSettingInitialMode), initialProbeCompletedOrModeSet: \(self.initialProbeCompletedOrModeSet)")
+                            sSelfAgain.logger.debug("Probing (7-Seg request delay): Skipped, probe no longer active or completed. isSettingInitialMode: \(sSelfAgain.isSettingInitialMode), initialProbeCompletedOrModeSet: \(sSelfAgain.initialProbeCompletedOrModeSet)")
                             #endif
                             return
                         }
                         #if DEBUG
-                        self.logger.info("Probing: 7-Segment timeout. Defaulting mode and completing probe.")
+                        sSelfAgain.logger.info("Probing: Requesting 7-Segment data after second toggle.")
                         #endif
-                        self.setInitialDisplayMode(self.displayMode)
+                        sSelfAgain.hasAttemptedSevenSegmentProbe = true
+                        sSelfAgain.sendSysEx(sSelfAgain.sysExRequestSevenSegment)
+
+                        sSelfAgain.probeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak sSelfAgain] _ in
+                            Task { @MainActor [weak sSelfAgain] in
+                                guard let sSelfYetAgain = sSelfAgain else { return }
+                                guard sSelfYetAgain.isSettingInitialMode, !sSelfYetAgain.initialProbeCompletedOrModeSet else {
+                                    #if DEBUG
+                                    sSelfYetAgain.logger.debug("Probe timer (7-Seg) fired, but probing already completed or mode set. isSettingInitialMode: \(sSelfYetAgain.isSettingInitialMode), initialProbeCompletedOrModeSet: \(sSelfYetAgain.initialProbeCompletedOrModeSet)")
+                                    #endif
+                                    return
+                                }
+                                #if DEBUG
+                                sSelfYetAgain.logger.info("Probing: 7-Segment timeout. Defaulting mode and completing probe using current displayMode (\(sSelfYetAgain.displayMode.rawValue)).")
+                                #endif
+                                sSelfYetAgain.setInitialDisplayMode(sSelfYetAgain.displayMode)
+                            }
+                        }
                     }
                 }
             }
@@ -965,6 +999,7 @@ class MIDIManager: ObservableObject {
 
         let wasConnectedInitially = self.isConnected
         var dataReceived = false
+        var wasFirstFullOLEDFrame = false // Flag for diagnostic
         
         if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x01 && bytes.last == 0xf7 {
             do {
@@ -977,6 +1012,9 @@ class MIDIManager: ObservableObject {
                     self.lastFrameBufferIsSet = true
                     self.frameBuffer = unpacked
                     self.oledFrameUpdateID = UUID()
+                    if !wasConnectedInitially && !self.isConnected { // Check if this is the frame that makes us connected
+                        wasFirstFullOLEDFrame = true
+                    }
                 } else {
                     self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
                     self.clearFrameBuffer()
@@ -990,7 +1028,7 @@ class MIDIManager: ObservableObject {
             } catch {
                 self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
             }
-        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 {
+        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 { // Delta OLED
             do {
                 self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[7...(bytes.count - 2)].count) bytes.")
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
@@ -1025,6 +1063,17 @@ class MIDIManager: ObservableObject {
         if dataReceived && !wasConnectedInitially && self.isConnected {
              self.logger.info("Data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
              if self.isWaitingForConnection { self.isWaitingForConnection = false }
+
+            // Diagnostic - force another oledFrameUpdateID change slightly after becoming connected via first full OLED frame
+            if wasFirstFullOLEDFrame {
+                #if DEBUG
+                self.logger.info("DIAGNOSTIC: First full OLED frame just processed, forcing another UI update trigger for Canvas.")
+                #endif
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in // 50ms delay
+                    guard let self = self else { return }
+                    self.oledFrameUpdateID = UUID()
+                }
+            }
         }
     }
 
