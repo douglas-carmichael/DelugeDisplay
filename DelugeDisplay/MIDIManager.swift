@@ -397,29 +397,43 @@ class MIDIManager: ObservableObject {
             return
         }
         
-        status = MIDIInputPortCreateWithBlock(client, "Input" as CFString, &inputPort) { [weak self] packetList, _ in
-            // Synchronously copy all packets to arrays
-            guard let strongSelf = self else { return }
+        status = MIDIInputPortCreateWithBlock(client, "Input" as CFString, &inputPort) { [weak self] packetListPointer, _ in
+            guard let strongSelf = self else {
+                return
+            }
             var packets: [[UInt8]] = []
-            var packetPtr = UnsafeMutablePointer(mutating: withUnsafePointer(to: packetList.pointee.packet) {
-                UnsafeRawPointer($0).assumingMemoryBound(to: MIDIPacket.self)
-            })
-            for _ in 0..<packetList.pointee.numPackets {
-                let packet = packetPtr.pointee
-                let length = Int(packet.length)
-                if length > 0, length <= strongSelf.maxSysExSize {
-                    let bytes: [UInt8] = withUnsafeBytes(of: packet.data) { rawBufferPtr in
+
+            var currentPacket: UnsafePointer<MIDIPacket> = UnsafeRawPointer(packetListPointer).advanced(by: MemoryLayout<UInt32>.size).assumingMemoryBound(to: MIDIPacket.self)
+
+            for _ in 0..<packetListPointer.pointee.numPackets {
+                let packetStruct = currentPacket.pointee
+                let length = Int(packetStruct.length)
+
+                if length > 0 && length <= strongSelf.maxSysExSize {
+                    let packetDataBytes: [UInt8] = withUnsafeBytes(of: packetStruct.data) { rawBufferPtr in
                         Array(rawBufferPtr.prefix(length))
                     }
-                    packets.append(bytes)
+                    packets.append(packetDataBytes)
+                } else {
+                    // Log skip if necessary, but critical logs were removed for build stability
                 }
-                packetPtr = MIDIPacketNext(packetPtr)
+                
+                // Advance to the next packet. MIDIPacketNext takes and returns UnsafePointer<MIDIPacket>.
+                // This addresses the error "Cannot assign value of type 'UnsafeMutablePointer<MIDIPacket>' to type 'UnsafePointer<MIDIPacket>'"
+                // by ensuring the RHS is explicitly UnsafePointer<MIDIPacket>.
+                currentPacket = UnsafePointer(MIDIPacketNext(currentPacket))
             }
-            // Now, process the copied data asynchronously
+            
+            if packets.isEmpty && packetListPointer.pointee.numPackets > 0 {
+            }
+
             for bytes in packets {
-                strongSelf.processQueue.async { [weak self] in
+                strongSelf.processQueue.async { [weak strongSelfInQueue = strongSelf] in
+                    guard let selfForTask = strongSelfInQueue else {
+                        return
+                    }
                     Task { @MainActor in
-                        self?.processSingleMIDIMessageOnBackgroundQueue(bytes)
+                        selfForTask.processSingleMIDIMessageOnBackgroundQueue(bytes)
                     }
                 }
             }
@@ -444,9 +458,6 @@ class MIDIManager: ObservableObject {
     }
     
     func scanAvailablePorts() {
-        // MARK: - MIDI Port Scanning and Management
-        // func setupMIDI() { ... } // Existing function
-
         #if DEBUG
         self.logger.debug("--- DUMPING ALL MIDI SOURCES (Inputs) ---")
         let numSources = MIDIGetNumberOfSources()
@@ -457,7 +468,6 @@ class MIDIManager: ObservableObject {
                 let endpoint = MIDIGetSource(i)
                 var nameCF: Unmanaged<CFString>?
                 MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
-                // Use takeRetainedValue() as per Apple's documentation for MIDIObjectGetStringProperty
                 let name = nameCF?.takeRetainedValue() as String? ?? "(Unnamed Source)"
                 self.logger.debug("Source Port \(i): \"\(name)\" (ID: \(endpoint))")
             }
@@ -479,8 +489,7 @@ class MIDIManager: ObservableObject {
         }
         self.logger.debug("--- END DUMPING MIDI DESTINATIONS ---")
         #endif
-        // End of ADD section
-
+        
         var localPorts: [MIDIPort] = []
         var portToAutoSelect: MIDIPort? = nil
         var portToReSelect: MIDIPort? = nil
@@ -488,8 +497,8 @@ class MIDIManager: ObservableObject {
         #if DEBUG
         logger.debug("Scanning for available MIDI ports to populate UI list (now on MainActor)...")
         #endif
-        // and use takeRetainedValue() for the name.
-        for i in 0..<MIDIGetNumberOfDestinations() { // This loop populates 'availablePorts' for the UI
+        
+        for i in 0..<MIDIGetNumberOfDestinations() {
             let endpoint = MIDIGetDestination(i)
             var nameCF: Unmanaged<CFString>?
             MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &nameCF)
@@ -503,7 +512,6 @@ class MIDIManager: ObservableObject {
                     portToReSelect = currentPort
                 }
             }
-            // nameCF is an Unmanaged<CFString>?. takeRetainedValue() correctly handles its memory management when converting to Swift String.
         }
             
         let oldAvailablePorts = self.availablePorts.map { $0.name }.sorted()
@@ -700,7 +708,7 @@ class MIDIManager: ObservableObject {
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            guard !self.initialProbeCompletedOrModeSet else { // Re-check in async block
+            guard !self.initialProbeCompletedOrModeSet else {
                 #if DEBUG
                 self.logger.debug("setInitialDisplayMode async: Probe already completed or mode set while async task was pending. Exiting for \(mode.rawValue).")
                 #endif
@@ -725,14 +733,11 @@ class MIDIManager: ObservableObject {
         let interval: TimeInterval = self.minimumScreenDeltaScanInterval
         
         let newTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timerThatFired in
-            // Capture necessary values for the Task
-            // modeForThisTimer and capturedGenerationForTimer are available from the outer scope.
             Task { @MainActor [weak self, weak timerThatFired, capturedGeneration = capturedGenerationForTimer] in
                 guard let strongSelf = self, let strongTimerThatFired = timerThatFired else {
                     return
                 }
 
-                // These checks are crucial to ensure only the correct timer instance acts
                 if strongSelf.displayLogicGeneration == capturedGeneration &&
                    strongSelf.updateTimer === strongTimerThatFired &&
                    strongTimerThatFired.isValid {
@@ -923,7 +928,9 @@ class MIDIManager: ObservableObject {
 
     private func processSingleMIDIMessageOnBackgroundQueue(_ bytes: [UInt8]) {
         Task { @MainActor [weak self, bytes] in
-            guard let self = self else { return }
+            guard let self = self else {
+                return
+            }
 
             for byte in bytes {
                 if byte == 0xf0 {
@@ -959,7 +966,7 @@ class MIDIManager: ObservableObject {
         let wasConnectedInitially = self.isConnected
         var dataReceived = false
         
-        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x01 && bytes.last == 0xf7 { // OLED
+        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x01 && bytes.last == 0xf7 {
             do {
                 self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
@@ -972,25 +979,20 @@ class MIDIManager: ObservableObject {
                     self.oledFrameUpdateID = UUID()
                 } else {
                     self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
-                    self.clearFrameBuffer() 
+                    self.clearFrameBuffer()
                 }
 
                 if !self.isConnected { self.isConnected = true }
                 dataReceived = true
                 if self.isSettingInitialMode && !self.initialProbeCompletedOrModeSet {
-                    #if DEBUG
-                    logger.debug("OLED data received during probe. Setting initial mode to OLED.")
-                    #endif
-                    setInitialDisplayMode(.oled)
+                    self.setInitialDisplayMode(.oled)
                 }
             } catch {
-                #if DEBUG
-                logger.error("Error unpacking OLED data: \(error.localizedDescription)")
-                #endif
+                self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
             }
-        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 { // OLED DELTA
+        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 {
             do {
-                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
+                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[7...(bytes.count - 2)].count) bytes.")
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
                 self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count).")
                 
@@ -1006,11 +1008,9 @@ class MIDIManager: ObservableObject {
                     self.clearFrameBuffer()
                 }
             } catch {
-#if DEBUG
-                logger.error("Error unpacking OLED data: \(error.localizedDescription)")
-#endif
+                self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
             }
-        } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 { // 7-Seg
+        } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 {
             self.sevenSegmentDots = bytes[6]
             self.sevenSegmentDigits = [bytes[7], bytes[8], bytes[9], bytes[10]]
             if !self.isConnected {
@@ -1018,17 +1018,12 @@ class MIDIManager: ObservableObject {
             }
             dataReceived = true
             if self.isSettingInitialMode && !self.initialProbeCompletedOrModeSet {
-                #if DEBUG
-                logger.debug("7-Segment data received during probe. Setting initial mode to 7-Segment.")
-                #endif
-                setInitialDisplayMode(.sevenSegment)
+                self.setInitialDisplayMode(.sevenSegment)
             }
         }
         
         if dataReceived && !wasConnectedInitially && self.isConnected {
-             #if DEBUG
              self.logger.info("Data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
-             #endif
              if self.isWaitingForConnection { self.isWaitingForConnection = false }
         }
     }
