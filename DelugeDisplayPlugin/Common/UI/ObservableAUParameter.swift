@@ -115,7 +115,6 @@ final class ObservableAUParameterGroup: ObservableAUParameterNode {
 ///
 /// The ObservableAUParameter can also manage automation event types by calling
 /// `onEditingChanged()` whenever a UI element will change its editing state.
-@Observable
 final class ObservableAUParameter: ObservableAUParameterNode {
 
     private weak var parameter: AUParameter?
@@ -152,20 +151,24 @@ final class ObservableAUParameter: ObservableAUParameterNode {
             }
         }
     }
+    
+    func handleValueDidSet(_ value: AUValue) {
+        guard editingState != .hostUpdate else { return }
+
+        let automationEventType = resolveEventType()
+        parameter?.setValue(
+            value,
+            originator: observerToken,
+            atHostTime: 0,
+            eventType: automationEventType
+        )
+        print("Param was set \(value)")
+    }
 
     var value: AUValue {
         didSet {
             /// If the editing state is .hostUpdate, don't propagate this back to the host
-            guard editingState != .hostUpdate else { return }
-
-            let automationEventType = resolveEventType()
-            parameter?.setValue(
-                value,
-                originator: observerToken,
-                atHostTime: 0,
-                eventType: automationEventType
-            )
-            print("Param was set \(value)")
+            handleValueDidSet(value)
         }
     }
 
@@ -187,7 +190,7 @@ final class ObservableAUParameter: ObservableAUParameterNode {
             editingState = .ended
 
             // We set the value here again to prompt its `didSet` implementation, so that we can send the appropriate `.release` event.
-            value = value
+            handleValueDidSet(value)
         }
     }
 

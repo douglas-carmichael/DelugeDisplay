@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<key>com.apple.security.network.client</key>
+	<key>com.apple.security.device.midi</key>
 	<true/>
 </dict>
 </plist>

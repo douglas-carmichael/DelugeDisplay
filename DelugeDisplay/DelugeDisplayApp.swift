@@ -99,7 +99,7 @@ struct DelugeDisplayApp: App {
              }
         }
         #endif // End of os(macOS) for window modifiers and commands
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             #if os(iOS)
             if newPhase == .background {
                 #if DEBUG
