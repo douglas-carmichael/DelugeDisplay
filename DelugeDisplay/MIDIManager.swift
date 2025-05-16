@@ -165,7 +165,7 @@ class MIDIManager: ObservableObject {
                             #if DEBUG
                             self.logger.info("7SEG->OLED: Delayed: Requesting OLED data. Gen: \(generation)")
                             #endif
-                            self.requestDisplayData(forMode: .oled)
+                            self.requestFullOLEDFrame() // Use force display command
                             
                             // 6. Start the update timer *here*, after all transition steps.
                             #if DEBUG
@@ -192,7 +192,11 @@ class MIDIManager: ObservableObject {
                                                // If OLED->7SEG also needs a toggle, it's fine.
                                                // If not, this toggle might flip it back to OLED if it was already 7SEG.
                                                // We established earlier that toggle is needed for *any* switch.
-                    requestDisplayData(forMode: currentMode)
+                    if currentMode == .oled {
+                        self.requestFullOLEDFrame()
+                    } else {
+                        self.requestDisplayData(forMode: currentMode)
+                    }
                     startUpdateTimer(forExplicitMode: currentMode, generation: generation)
                 }
             } else { // isSettingInitialMode == true
@@ -643,14 +647,14 @@ class MIDIManager: ObservableObject {
         }
 
         let previousIsSettingInitialMode = self.isSettingInitialMode
-        self.isSettingInitialMode = true 
+        self.isSettingInitialMode = true
 
         if self.displayMode != mode {
             self.displayLogicGeneration &+= 1
             #if DEBUG
             logger.debug("setInitialDisplayMode: Setting displayMode from \(self.displayMode.rawValue) to \(mode.rawValue) for initial setup. New generation: \(self.displayLogicGeneration)")
             #endif
-            self.displayMode = mode 
+            self.displayMode = mode
         } else {
             #if DEBUG
             logger.debug("setInitialDisplayMode: Target mode \(mode.rawValue) is already the current mode for initial setup. Finalizing. Gen: \(self.displayLogicGeneration)")
@@ -666,9 +670,9 @@ class MIDIManager: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.050) { [weak self] in // Minimal delay for first request
             guard let self = self else { return }
 
-            guard self.displayMode == mode, 
+            guard self.displayMode == mode,
                   self.displayLogicGeneration == capturedGeneration,
-                  !self.initialProbeCompletedOrModeSet else { 
+                  !self.initialProbeCompletedOrModeSet else {
                 #if DEBUG
                 self.logger.info("setInitialDisplayMode (delayed, path 1 for req1) [Expected Gen \(capturedGeneration) for \(mode.rawValue)]: Action skipped. State changed or setup already completed. Current: \(self.displayMode.rawValue)/Gen\(self.displayLogicGeneration)/Completed:\(self.initialProbeCompletedOrModeSet)")
                 #endif
@@ -679,7 +683,11 @@ class MIDIManager: ObservableObject {
             #if DEBUG
             self.logger.info("setInitialDisplayMode (delayed, req1) [Gen \(capturedGeneration)]: Requesting data for initial mode \(mode.rawValue).")
             #endif
-            self.requestDisplayData(forMode: mode) 
+            if mode == .oled {
+                self.requestFullOLEDFrame()
+            } else {
+                self.requestDisplayData(forMode: mode)
+            }
 
             // Schedule second request and finalization
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.100) { [weak self] in // Further delay for second request + finalization
@@ -697,10 +705,14 @@ class MIDIManager: ObservableObject {
                 #if DEBUG
                 self.logger.info("setInitialDisplayMode (delayed, req2) [Gen \(capturedGeneration)]: Requesting data AGAIN for initial mode \(mode.rawValue).")
                 #endif
-                self.requestDisplayData(forMode: mode) // Second request
+                if mode == .oled {
+                    self.requestFullOLEDFrame()
+                } else {
+                    self.requestDisplayData(forMode: mode)
+                }
 
-                self.isSettingInitialMode = false 
-                self.initialProbeCompletedOrModeSet = true 
+                self.isSettingInitialMode = false
+                self.initialProbeCompletedOrModeSet = true
                 #if DEBUG
                 self.logger.info("setInitialDisplayMode (delayed, finalized) [Gen \(capturedGeneration)]: Initial setup complete. Mode: \(mode.rawValue). Starting update timer.")
                 #endif
@@ -796,6 +808,19 @@ class MIDIManager: ObservableObject {
 
         let sysExCommand = self.lastFrameBufferIsSet ? self.sysExRequestDisplay: self.sysExRequestDisplayForce
         self.sendSysEx(sysExCommand)
+    }
+    
+    private func requestFullOLEDFrame() {
+        guard self.isConnected || self.isWaitingForConnection || self.isSettingInitialMode else {
+            #if DEBUG
+            self.logger.debug("Skipping full OLED frame request: Not connected, not waiting for connection, and not in initial mode setting.")
+            #endif
+            return
+        }
+        #if DEBUG
+        self.logger.debug("Requesting FULL OLED display data (explicitly, using force command).")
+        #endif
+        self.sendSysEx(self.sysExRequestDisplayForce)
     }
     
     private func sendDisplayToggleCommand() {
@@ -962,27 +987,31 @@ class MIDIManager: ObservableObject {
                 self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
                 #endif
                 
-                if unpacked.count == self.expectedFrameSize {
-                    self.lastFrameBuffer = unpacked
-                    self.lastFrameBufferIsSet = true
-                    self.frameBuffer = unpacked
-                    self.oledFrameUpdateID = UUID()
-                    
-                    if !self.isConnected { self.isConnected = true }
-                    dataReceivedThisMessage = true
-                    if !wasConnectedInitially && self.isConnected {
-                        oledDataEstablishedConnectionThisMessage = true
-                    }
-                    
-                    if self.isSettingInitialMode && !self.initialProbeCompletedOrModeSet {
-                        #if DEBUG
-                        self.logger.info("processSysExMessage: Full OLED data received during initial mode setting. Finalizing with OLED mode.")
-                        #endif
-                        self.setInitialDisplayMode(.oled)
-                    }
-                } else {
-                    self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
-                    self.clearFrameBuffer()
+                var finalFrameData = unpacked
+                if unpacked.count < self.expectedFrameSize {
+                    self.logger.warning("Received full OLED data size (\(unpacked.count)) is less than expected (\(self.expectedFrameSize)). Padding with zeros.")
+                    finalFrameData.append(contentsOf: [UInt8](repeating: 0, count: self.expectedFrameSize - unpacked.count))
+                } else if unpacked.count > self.expectedFrameSize {
+                    self.logger.warning("Received full OLED data size (\(unpacked.count)) is greater than expected (\(self.expectedFrameSize)). Truncating.")
+                    finalFrameData = Array(unpacked.prefix(self.expectedFrameSize))
+                }
+
+                self.lastFrameBuffer = finalFrameData
+                self.lastFrameBufferIsSet = true
+                self.frameBuffer = finalFrameData
+                self.oledFrameUpdateID = UUID()
+                
+                if !self.isConnected { self.isConnected = true }
+                dataReceivedThisMessage = true
+                if !wasConnectedInitially && self.isConnected {
+                    oledDataEstablishedConnectionThisMessage = true
+                }
+                
+                if self.isSettingInitialMode && !self.initialProbeCompletedOrModeSet {
+                    #if DEBUG
+                    self.logger.info("processSysExMessage: Full OLED data received during initial mode setting. Finalizing with OLED mode.")
+                    #endif
+                    self.setInitialDisplayMode(.oled)
                 }
             } catch {
                 self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
@@ -1001,10 +1030,22 @@ class MIDIManager: ObservableObject {
                 #if DEBUG
                 self.logger.debug("First byte changed: \(firstByteChanged).")
                 #endif
+
+                // Ensure framebuffer is initialized if we haven't received a full frame yet
+                var bufferWasInitializedByThisDelta = false
+                if !self.lastFrameBufferIsSet {
+                    self.logger.warning("Processing delta OLED frame but no full frame has been set. Initializing framebuffer to zeros.")
+                    self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+                    bufferWasInitializedByThisDelta = true
+                }
                 
                 if (firstByteChanged + unpacked.count <= self.expectedFrameSize) {
                     self.frameBuffer.replaceSubrange(firstByteChanged..<(firstByteChanged + unpacked.count), with: unpacked)
                     self.lastFrameBuffer = self.frameBuffer
+                    if bufferWasInitializedByThisDelta {
+                        self.lastFrameBufferIsSet = true
+                        self.logger.info("Delta processing: lastFrameBufferIsSet is now true after initializing and applying the first delta.")
+                    }
                     self.oledFrameUpdateID = UUID()
                     
                     if !self.isConnected { self.isConnected = true }
