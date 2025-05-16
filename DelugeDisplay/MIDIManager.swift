@@ -156,6 +156,7 @@ class MIDIManager: ObservableObject {
                             //    If immediate clear + Deluge toggle is clean, this might not be needed.
                             //    For now, let's assume the immediate clear is sufficient and Deluge won't send garbage
                             //    that briefly appears before proper OLED data.
+                            //    If issues arise, consider adding a small delay here to ensure the transition frame is skipped.
                             // #if DEBUG
                             // self.logger.info("7SEG->OLED: Delayed: Optionally re-clearing frame buffer. Gen: \(generation)")
                             // #endif
@@ -233,7 +234,9 @@ class MIDIManager: ObservableObject {
     
     private var updateTimer: Timer?
     private var displayLogicGeneration: Int = 0
-    
+    private let bomeBoxHeaderSize = 5 // BomeBox injects 5-byte headers
+    private let bomeBoxMessageDelay: TimeInterval = 0.02 // Add small delay for BomeBox message coalescence
+
     init() {
         self.isSettingInitialMode = false
         self.initialProbeCompletedOrModeSet = false
@@ -809,7 +812,12 @@ class MIDIManager: ObservableObject {
             #endif
             sysExCommand = self.sysExRequestSevenSegment
         }
-        self.sendSysEx(sysExCommand)
+        
+        // Modify these constants near the top for better timing handling
+        // Add small delay for BomeBox message timing
+        DispatchQueue.main.asyncAfter(deadline: .now() + bomeBoxMessageDelay) { [weak self] in
+            self?.sendSysEx(sysExCommand)
+        }
     }
     
     private func requestDisplayDelta() {
@@ -821,7 +829,11 @@ class MIDIManager: ObservableObject {
         }
 
         let sysExCommand = self.lastFrameBufferIsSet ? self.sysExRequestDisplay: self.sysExRequestDisplayForce
-        self.sendSysEx(sysExCommand)
+        
+        // Add small delay for BomeBox message timing
+        DispatchQueue.main.asyncAfter(deadline: .now() + bomeBoxMessageDelay) { [weak self] in
+            self?.sendSysEx(sysExCommand)
+        }
     }
     
     private func requestFullOLEDFrame() {
@@ -843,7 +855,11 @@ class MIDIManager: ObservableObject {
         #if DEBUG
         self.logger.info("Sending display toggle command to Deluge.")
         #endif
-        self.sendSysEx(command)
+        
+        // Add small delay for BomeBox message timing
+        DispatchQueue.main.asyncAfter(deadline: .now() + bomeBoxMessageDelay) { [weak self] in
+            self?.sendSysEx(command)
+        }
     }
     
     private func sendSysEx(_ data: [UInt8]) {
@@ -956,38 +972,49 @@ class MIDIManager: ObservableObject {
                 return
             }
 
-            for byte in bytes {
+            var processedBytes = bytes
+            
+            // If this is a Deluge SysEx message that got interrupted by BomeBox header
+            if let firstF0Index = bytes.firstIndex(of: 0xF0),
+               firstF0Index > 0,
+               bytes[..<firstF0Index].count <= self.bomeBoxHeaderSize {
+                // Skip BomeBox header bytes
+                processedBytes = Array(bytes[firstF0Index...])
+            }
+
+            for byte in processedBytes {
                 if self.bomeBoxHeaderSkipCountdown > 0 {
-                    #if DEBUG
-                    self.logger.debug("Skipping BomeBox injected header byte: \(String(format: "%02X", byte)). Countdown: \(self.bomeBoxHeaderSkipCountdown - 1)")
-                    #endif
                     self.bomeBoxHeaderSkipCountdown -= 1
-                    continue // Skip this byte
+                    continue
                 }
 
                 if byte == 0xf0 {
-                    if self.isProcessingSysEx && !self.sysExBuffer.isEmpty && self.sysExBuffer.prefix(2) == [0xF0, 0x7D] {
-                        #if DEBUG
-                        self.logger.warning("BomeBox F0 Interruption: Received new F0 while processing Deluge SysEx. Buffer size: \(self.sysExBuffer.count). Current F0 is skipped. Attempting to skip subsequent 5-byte BomeBox header.")
-                        #endif
-                        self.bomeBoxHeaderSkipCountdown = 5
-                        self.bomeBoxHeaderSkipCountdown -= 1 // The current F0 byte is implicitly skipped as we don't append it here and proceed to next iteration.
-                    } else {
+                    if self.isProcessingSysEx && !self.sysExBuffer.isEmpty {
+                        if self.sysExBuffer.prefix(2) == [0xF0, 0x7D] {
+                            // This is a valid Deluge message that got interrupted
+                            #if DEBUG
+                            self.logger.warning("BomeBox F0 Interruption: Processing accumulated buffer first")
+                            #endif
+                            let bufferCopy = self.sysExBuffer
+                            self.processSysExMessage(bufferCopy)
+                        }
                         self.sysExBuffer.removeAll()
-                        self.sysExBuffer.append(byte)
-                        self.isProcessingSysEx = true
-                        self.bomeBoxHeaderSkipCountdown = 0
                     }
+                    self.sysExBuffer = [byte]
+                    self.isProcessingSysEx = true
+                    self.bomeBoxHeaderSkipCountdown = 0
+                    
                 } else if byte == 0xf7 && self.isProcessingSysEx {
                     self.sysExBuffer.append(byte)
                     let bufferCopy = self.sysExBuffer
                     #if DEBUG
-                    self.logger.debug("Processing assembled SysEx message (\(bufferCopy.count) bytes): \(bufferCopy.map { String(format: "%02X", $0) })")
+                    self.logger.debug("Processing assembled SysEx message (\(bufferCopy.count) bytes)")
                     #endif
                     self.processSysExMessage(bufferCopy)
                     self.sysExBuffer.removeAll()
                     self.isProcessingSysEx = false
                     self.bomeBoxHeaderSkipCountdown = 0
+                    
                 } else if self.isProcessingSysEx {
                     if self.sysExBuffer.count < self.maxSysExSize {
                         self.sysExBuffer.append(byte)
@@ -1161,7 +1188,7 @@ class MIDIManager: ObservableObject {
     private var lastPacketTime = Date()
     private var isProcessingSysEx = false
     private var lastScanTime: Date = Date()
-    private let minimumScreenDeltaScanInterval: TimeInterval = 0.05
+    private let minimumScreenDeltaScanInterval: TimeInterval = 0.1 // Increase from 0.05 to give BomeBox more headroom
     private let minimumPortScanInterval: TimeInterval = 5.0
     private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
     private let sysExRequestDisplay: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
