@@ -415,9 +415,23 @@ class MIDIManager: ObservableObject {
                     let packetDataBytes: [UInt8] = withUnsafeBytes(of: packetStruct.data) { rawBufferPtr in
                         Array(rawBufferPtr.prefix(length))
                     }
+                    #if DEBUG
+                    DispatchQueue.main.async { // Log on main actor to use self.logger
+                         strongSelf.logger.debug("Raw MIDI Packet Received (\(length) bytes): \(packetDataBytes.map { String(format: "%02X", $0) })")
+                    }
+                    #endif
                     packets.append(packetDataBytes)
                 } else {
                     // Log skip if necessary, but critical logs were removed for build stability
+                    #if DEBUG
+                    DispatchQueue.main.async { // Log on main actor to use self.logger
+                        if length > strongSelf.maxSysExSize {
+                            strongSelf.logger.error("Raw MIDI Packet too large (\(length) bytes), skipped. Max packet data size: \(strongSelf.maxSysExSize)")
+                        } else if length <= 0 {
+                            strongSelf.logger.debug("Raw MIDI Packet empty or invalid length (\(length) bytes), skipped.")
+                        }
+                    }
+                    #endif
                 }
                 
                 // Advance to the next packet. MIDIPacketNext takes and returns UnsafePointer<MIDIPacket>.
@@ -943,16 +957,37 @@ class MIDIManager: ObservableObject {
             }
 
             for byte in bytes {
+                if self.bomeBoxHeaderSkipCountdown > 0 {
+                    #if DEBUG
+                    self.logger.debug("Skipping BomeBox injected header byte: \(String(format: "%02X", byte)). Countdown: \(self.bomeBoxHeaderSkipCountdown - 1)")
+                    #endif
+                    self.bomeBoxHeaderSkipCountdown -= 1
+                    continue // Skip this byte
+                }
+
                 if byte == 0xf0 {
-                    self.sysExBuffer.removeAll()
-                    self.sysExBuffer.append(byte)
-                    self.isProcessingSysEx = true
+                    if self.isProcessingSysEx && !self.sysExBuffer.isEmpty && self.sysExBuffer.prefix(2) == [0xF0, 0x7D] {
+                        #if DEBUG
+                        self.logger.warning("BomeBox F0 Interruption: Received new F0 while processing Deluge SysEx. Buffer size: \(self.sysExBuffer.count). Current F0 is skipped. Attempting to skip subsequent 5-byte BomeBox header.")
+                        #endif
+                        self.bomeBoxHeaderSkipCountdown = 5
+                        self.bomeBoxHeaderSkipCountdown -= 1 // The current F0 byte is implicitly skipped as we don't append it here and proceed to next iteration.
+                    } else {
+                        self.sysExBuffer.removeAll()
+                        self.sysExBuffer.append(byte)
+                        self.isProcessingSysEx = true
+                        self.bomeBoxHeaderSkipCountdown = 0
+                    }
                 } else if byte == 0xf7 && self.isProcessingSysEx {
                     self.sysExBuffer.append(byte)
                     let bufferCopy = self.sysExBuffer
+                    #if DEBUG
+                    self.logger.debug("Processing assembled SysEx message (\(bufferCopy.count) bytes): \(bufferCopy.map { String(format: "%02X", $0) })")
+                    #endif
                     self.processSysExMessage(bufferCopy)
                     self.sysExBuffer.removeAll()
                     self.isProcessingSysEx = false
+                    self.bomeBoxHeaderSkipCountdown = 0
                 } else if self.isProcessingSysEx {
                     if self.sysExBuffer.count < self.maxSysExSize {
                         self.sysExBuffer.append(byte)
@@ -960,6 +995,7 @@ class MIDIManager: ObservableObject {
                         self.logger.error("SysEx buffer overflow. Max size: \(self.maxSysExSize). Discarding message.")
                         self.sysExBuffer.removeAll()
                         self.isProcessingSysEx = false
+                        self.bomeBoxHeaderSkipCountdown = 0
                     }
                 }
             }
@@ -1141,4 +1177,5 @@ class MIDIManager: ObservableObject {
             }
         }
     }
+    private var bomeBoxHeaderSkipCountdown = 0
 }
