@@ -898,10 +898,11 @@ class MIDIManager: ObservableObject {
         #if DEBUG
         logger.debug("Clearing frame buffer.")
         #endif
-        self.lastFrameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
-        self.lastFrameBufferIsSet = false
         self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
         self.oledFrameUpdateID = UUID()
+        // Then clear last frame buffer
+        self.lastFrameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
+        self.lastFrameBufferIsSet = false
     }
     
     private func clearSevenSegmentData() {
@@ -968,18 +969,16 @@ class MIDIManager: ObservableObject {
 
     private func processSingleMIDIMessageOnBackgroundQueue(_ bytes: [UInt8]) {
         Task { @MainActor [weak self, bytes] in
-            guard let self = self else {
-                return
-            }
+            guard let self = self else { return }
 
             var processedBytes = bytes
             
-            // If this is a Deluge SysEx message that got interrupted by BomeBox header
-            if let firstF0Index = bytes.firstIndex(of: 0xF0),
-               firstF0Index > 0,
-               bytes[..<firstF0Index].count <= self.bomeBoxHeaderSize {
-                // Skip BomeBox header bytes
-                processedBytes = Array(bytes[firstF0Index...])
+            if bytes.count > self.bomeBoxHeaderSize {
+                if let firstF0Index = bytes.firstIndex(of: 0xF0) {
+                    if firstF0Index > 0 && firstF0Index <= self.bomeBoxHeaderSize {
+                        processedBytes = Array(bytes[firstF0Index...])
+                    }
+                }
             }
 
             for byte in processedBytes {

@@ -12,7 +12,10 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
     var dst = [UInt8]()
     var s = 0
     var workingData = data
-    if !pendingPacket.isEmpty {
+    
+    if workingData.count >= 3 && workingData[0] == 0x40 && workingData[1] == 0x01 {
+        pendingPacket = []
+    } else if !pendingPacket.isEmpty {
         workingData = pendingPacket + data
         pendingPacket = []
     }
@@ -26,7 +29,6 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
         s += 1
         
         if first < 64 {
-            // Dense packet
             var size = 0
             var off = 0
             if first < 4 { size = 2; off = 0 }
@@ -58,7 +60,6 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             s += size
             
         } else {
-            // RLE packet
             let marker = first - 64
             let high = (marker & 1) != 0
             var runLen = Int(marker >> 1)
