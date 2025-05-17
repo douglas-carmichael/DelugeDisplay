@@ -1039,16 +1039,25 @@ class MIDIManager: ObservableObject {
         var dataReceivedThisMessage = false
         var oledDataEstablishedConnectionThisMessage = false
         
-        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x01 && bytes.last == 0xf7 { // Full OLED frame
+        // Detect frame type
+        let isFullOLEDFrame = bytes.count >= 7 && 
+                             bytes[2] == 0x02 && 
+                             bytes[3] == 0x40 && 
+                             (bytes[4] == 0x01 || // Standard full frame
+                              (bytes[4] == 0x02 && bytes[5] == 0x00)) // BomeBox chunked full frame
+        
+        if isFullOLEDFrame { // Full OLED frame
             do {
+                let dataStartIndex = (bytes[4] == 0x01) ? 6 : 7 // Adjust start index based on header type
                 #if DEBUG
-                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
+                self.logger.debug("FULL FRAME: Raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[dataStartIndex...(bytes.count - 2)].count) bytes.")
                 #endif
-                let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
-                #if DEBUG
-                self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
+                let (unpacked, _) = try unpack7to8RLE(Array(bytes[dataStartIndex...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
+                #if DEBUG 
+                let packetDesc = bytes.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ")
+                self.logger.debug("FULL FRAME: Unpacked size: \(unpacked.count). Expected: \(self.expectedFrameSize). Packet starts: \(packetDesc)")
                 #endif
-                
+
                 var finalFrameData = unpacked
                 if unpacked.count < self.expectedFrameSize {
                     self.logger.warning("Received full OLED data size (\(unpacked.count)) is less than expected (\(self.expectedFrameSize)). Padding with zeros.")
@@ -1076,37 +1085,41 @@ class MIDIManager: ObservableObject {
                     self.setInitialDisplayMode(.oled)
                 }
             } catch {
-                self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
+                self.logger.error("Error unpacking OLED full frame data: \(error.localizedDescription)")
             }
         } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes[4] == 0x02 { // Delta OLED
             do {
                 #if DEBUG
-                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[7...(bytes.count - 2)].count) bytes.")
+                self.logger.debug("DELTA FRAME: Raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[7...(bytes.count - 2)].count) bytes.")
                 #endif
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
                 #if DEBUG
-                self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count).")
+                let packetDesc = bytes.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ")
+                self.logger.debug("DELTA FRAME: First byte changed: \(Int(bytes[5]) * 8). Unpacked size: \(unpacked.count). Packet starts: \(packetDesc)")
                 #endif
-                
+
                 let firstByteChanged: Int = Int(bytes[5]) * 8
-                #if DEBUG
-                self.logger.debug("First byte changed: \(firstByteChanged).")
-                #endif
 
                 // Ensure framebuffer is initialized if we haven't received a full frame yet
                 var bufferWasInitializedByThisDelta = false
                 if !self.lastFrameBufferIsSet {
-                    self.logger.warning("Processing delta OLED frame but no full frame has been set. Initializing framebuffer to zeros.")
                     self.frameBuffer = Array(repeating: 0, count: self.expectedFrameSize)
                     bufferWasInitializedByThisDelta = true
+                    #if DEBUG
+                    self.logger.warning("Processing delta OLED frame but no full frame has been set. Initializing framebuffer to zeros.")
+                    #endif
                 }
-                
-                if (firstByteChanged + unpacked.count <= self.expectedFrameSize) {
+
+                // Handle chunked frames from BomeBox
+                if firstByteChanged + unpacked.count <= self.expectedFrameSize {
+                    // Update the frame buffer only if we're within bounds
                     self.frameBuffer.replaceSubrange(firstByteChanged..<(firstByteChanged + unpacked.count), with: unpacked)
-                    self.lastFrameBuffer = self.frameBuffer
+                    self.lastFrameBuffer = self.frameBuffer // Always update last buffer after successful delta
                     if bufferWasInitializedByThisDelta {
                         self.lastFrameBufferIsSet = true
+                        #if DEBUG
                         self.logger.info("Delta processing: lastFrameBufferIsSet is now true after initializing and applying the first delta.")
+                        #endif
                     }
                     self.oledFrameUpdateID = UUID()
                     
@@ -1123,13 +1136,17 @@ class MIDIManager: ObservableObject {
                         self.setInitialDisplayMode(.oled)
                     }
                 } else {
-                    self.logger.error("Received OLED data size (\(unpacked.count)) does not match maximum expected (\(self.expectedFrameSize)). Clearing buffer.")
-                    self.clearFrameBuffer()
+                    #if DEBUG
+                    self.logger.error("Delta offset (\(firstByteChanged)) + size (\(unpacked.count)) exceeds frameBuffer size (\(self.expectedFrameSize))")
+                    #endif
                 }
             } catch {
-                self.logger.error("Error unpacking OLED data: \(error.localizedDescription)")
+                self.logger.error("Error unpacking OLED delta frame data: \(error.localizedDescription)")
             }
-        } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 {
+        }
+
+        // Rest of function remains unchanged
+        if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 {
             self.sevenSegmentDots = bytes[6]
             self.sevenSegmentDigits = [bytes[7], bytes[8], bytes[9], bytes[10]]
             if !self.isConnected {
