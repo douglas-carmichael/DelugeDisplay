@@ -738,6 +738,47 @@ class MIDIManager: ObservableObject {
         }
     }
 
+    func refreshDisplay() {
+        logger.info("Refresh Display command triggered.")
+        
+        let currentMode = self.displayMode
+        let generation = self.displayLogicGeneration // Use current generation
+
+        // Clear the current display's buffer
+        if currentMode == .oled {
+            logger.debug("RefreshDisplay: Clearing OLED frame buffer.")
+            clearFrameBuffer()
+        } else {
+            logger.debug("RefreshDisplay: Clearing 7-segment data.")
+            clearSevenSegmentData()
+        }
+
+        // Request a full update for the current mode
+        if currentMode == .oled {
+            logger.debug("RefreshDisplay: Requesting full OLED frame.")
+            // Send the command to force a full OLED frame.
+            // We use requestFullOLEDFrame as it directly sends sysExRequestDisplayForce.
+            requestFullOLEDFrame()
+        } else { // SevenSegment
+            logger.debug("RefreshDisplay: Requesting 7-segment data.")
+            // For 7-segment, any request is a "full" request.
+            requestDisplayData(forMode: .sevenSegment)
+        }
+        
+        // It might be beneficial to briefly restart the update timer
+        // to ensure it's aligned after a manual refresh, especially if
+        // the connection was in a weird state.
+        // However, the existing timer logic should pick up if data flow resumes.
+        // For now, let's rely on the existing timer logic.
+        // If issues arise, consider:
+        // self.startUpdateTimer(forExplicitMode: currentMode, generation: generation)
+        
+        // Trigger a UI update for OLED if that's the mode, as clearFrameBuffer already does.
+        if currentMode == .oled {
+            self.oledFrameUpdateID = UUID()
+        }
+    }
+
     private func startUpdateTimer(forExplicitMode modeToUse: DelugeDisplayMode, generation: Int) {
         updateTimer?.invalidate()
 
@@ -1040,9 +1081,9 @@ class MIDIManager: ObservableObject {
         var oledDataEstablishedConnectionThisMessage = false
         
         // Detect frame type
-        let isFullOLEDFrame = bytes.count >= 7 && 
-                             bytes[2] == 0x02 && 
-                             bytes[3] == 0x40 && 
+        let isFullOLEDFrame = bytes.count >= 7 &&
+                             bytes[2] == 0x02 &&
+                             bytes[3] == 0x40 &&
                              (bytes[4] == 0x01 || // Standard full frame
                               (bytes[4] == 0x02 && bytes[5] == 0x00)) // BomeBox chunked full frame
         
@@ -1053,7 +1094,7 @@ class MIDIManager: ObservableObject {
                 self.logger.debug("FULL FRAME: Raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[dataStartIndex...(bytes.count - 2)].count) bytes.")
                 #endif
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[dataStartIndex...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
-                #if DEBUG 
+                #if DEBUG
                 let packetDesc = bytes.prefix(10).map { String(format: "%02X", $0) }.joined(separator: " ")
                 self.logger.debug("FULL FRAME: Unpacked size: \(unpacked.count). Expected: \(self.expectedFrameSize). Packet starts: \(packetDesc)")
                 #endif
