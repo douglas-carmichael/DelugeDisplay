@@ -44,9 +44,10 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             
             if dst.count + size > maxBytes {
                 #if DEBUG
-                logger.error("Dense packet would exceed maxBytes")
+                logger.error("Dense packet (size \(size)) would exceed maxBytes for destination. dst.count: \(dst.count), maxBytes: \(maxBytes)")
                 #endif
-                break
+                s += size
+                continue
             }
             
             let highBits = first - UInt8(off)
@@ -83,9 +84,10 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             }
             s += 1
             
-            runLen = min(runLen, maxBytes - dst.count)
-            if runLen > 0 {
-                dst.append(contentsOf: repeatElement(byte, count: runLen))
+            let availableSpace = maxBytes - dst.count
+            if availableSpace > 0 {
+                let actualRunLen = min(runLen, availableSpace)
+                dst.append(contentsOf: repeatElement(byte, count: actualRunLen))
             }
         }
     }
