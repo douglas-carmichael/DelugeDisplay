@@ -94,10 +94,10 @@ class MIDIManager: ObservableObject {
         didSet {
             guard oldValue != self.displayMode else { return }
 
-            let generation = self.displayLogicGeneration &+ 1
-            self.displayLogicGeneration = generation
+            let _ = self.displayLogicGeneration &+ 1
+            self.displayLogicGeneration = self.displayLogicGeneration &+ 1 
             #if DEBUG
-            logger.debug("Display mode changed. New generation: \(generation)")
+            logger.debug("Display mode changed. New generation: \(self.displayLogicGeneration)")
             #endif
 
             let previousMode = oldValue
@@ -131,51 +131,51 @@ class MIDIManager: ObservableObject {
 
             if !isSettingInitialMode {
                 #if DEBUG
-                logger.info("Display mode changed by user from \(previousMode.rawValue) to \(currentMode.rawValue). Processing. Generation: \(generation)")
+                logger.info("Display mode changed by user from \(previousMode.rawValue) to \(currentMode.rawValue). Processing. Generation: \(self.displayLogicGeneration)")
                 #endif
                 UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
                 
                 if previousMode == .sevenSegment && currentMode == .oled {
                     // 1. Clear frame buffer immediately for a clean slate.
                     #if DEBUG
-                    logger.info("7SEG->OLED: Clearing frame buffer immediately. Gen: \(generation)")
+                    logger.info("7SEG->OLED: Clearing frame buffer immediately. Gen: \(self.displayLogicGeneration)")
                     #endif
                     self.clearFrameBuffer() // Ensures DelugeScreenView starts blank.
                     
                     // 2. Tell Deluge to switch its mode
                     #if DEBUG
-                    logger.info("7SEG->OLED: Sending toggle command. Gen: \(generation)")
+                    logger.info("7SEG->OLED: Sending toggle command. Gen: \(self.displayLogicGeneration)")
                     #endif
                     sendDisplayToggleCommand()
                     
                     // 3. Delay further actions to allow Deluge to process toggle and send a potential transitional frame (which we might ignore or overwrite)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.075) { // 75ms delay (tune this)
                         // Only proceed if mode and generation haven't changed again
-                        if self.displayMode == .oled && self.displayLogicGeneration == generation {
+                        if self.displayMode == .oled && self.displayLogicGeneration == self.displayLogicGeneration {
                             // 4. Optional: Re-clear the app's frameBuffer if Deluge sends a transitional frame we don't want.
                             //    If immediate clear + Deluge toggle is clean, this might not be needed.
                             //    For now, let's assume the immediate clear is sufficient and Deluge won't send garbage
                             //    that briefly appears before proper OLED data.
                             //    If issues arise, consider adding a small delay here to ensure the transition frame is skipped.
                             // #if DEBUG
-                            // self.logger.info("7SEG->OLED: Delayed: Optionally re-clearing frame buffer. Gen: \(generation)")
+                            // self.logger.info("7SEG->OLED: Delayed: Optionally re-clearing frame buffer. Gen: \(self.displayLogicGeneration)")
                             // #endif
                             // self.clearFrameBuffer()
                             
                             // 5. Request actual OLED data
                             #if DEBUG
-                            self.logger.info("7SEG->OLED: Delayed: Requesting OLED data. Gen: \(generation)")
+                            self.logger.info("7SEG->OLED: Delayed: Requesting OLED data. Gen: \(self.displayLogicGeneration)")
                             #endif
                             self.requestFullOLEDFrame() // Use force display command
                             
                             // 6. Start the update timer *here*, after all transition steps.
                             #if DEBUG
-                            self.logger.info("7SEG->OLED: Delayed: Starting update timer. Gen: \(generation)")
+                            self.logger.info("7SEG->OLED: Delayed: Starting update timer. Gen: \(self.displayLogicGeneration)")
                             #endif
-                            self.startUpdateTimer(forExplicitMode: .oled, generation: generation)
+                            self.startUpdateTimer(forExplicitMode: .oled, generation: self.displayLogicGeneration)
                         } else {
                             #if DEBUG
-                            self.logger.info("7SEG->OLED: Delayed action skipped due to mode/gen change. Expected OLED/Gen\(generation), got \(self.displayMode.rawValue)/Gen\(self.displayLogicGeneration)")
+                            self.logger.info("7SEG->OLED: Delayed action skipped due to mode/gen change. Expected OLED/Gen\(self.displayLogicGeneration), got \(self.displayMode.rawValue)/Gen\(self.displayLogicGeneration)")
                             #endif
                         }
                     }
@@ -185,7 +185,7 @@ class MIDIManager: ObservableObject {
                     if currentMode == .oled && previousMode == .oled { // e.g. port change while in OLED
                         clearFrameBuffer() // Ensure it's clean
                         #if DEBUG
-                        logger.debug("OLED->OLED (e.g. port change): Ensuring frame buffer is clear. Gen: \(generation)")
+                        logger.debug("OLED->OLED (e.g. port change): Ensuring frame buffer is clear. Gen: \(self.displayLogicGeneration)")
                         #endif
                     }
                     // For OLED->7SEG or other direct transitions, send toggle, request data, and start timer immediately.
@@ -198,11 +198,11 @@ class MIDIManager: ObservableObject {
                     } else {
                         self.requestDisplayData(forMode: currentMode)
                     }
-                    startUpdateTimer(forExplicitMode: currentMode, generation: generation)
+                    startUpdateTimer(forExplicitMode: currentMode, generation: self.displayLogicGeneration)
                 }
             } else { // isSettingInitialMode == true
                 #if DEBUG
-                logger.info("Initial display mode programmatically set from \(previousMode.rawValue) to \(currentMode.rawValue). Gen: \(generation)")
+                logger.info("Initial display mode programmatically set from \(previousMode.rawValue) to \(currentMode.rawValue). Gen: \(self.displayLogicGeneration)")
                 #endif
                 UserDefaults.standard.set(currentMode.rawValue, forKey: "displayMode")
                 
@@ -742,7 +742,6 @@ class MIDIManager: ObservableObject {
         logger.info("Refresh Display command triggered.")
         
         let currentMode = self.displayMode
-        let generation = self.displayLogicGeneration // Use current generation
 
         // Clear the current display's buffer
         if currentMode == .oled {
@@ -1033,7 +1032,7 @@ class MIDIManager: ObservableObject {
                         if self.sysExBuffer.prefix(2) == [0xF0, 0x7D] {
                             // This is a valid Deluge message that got interrupted
                             #if DEBUG
-                            self.logger.warning("BomeBox F0 Interruption: Processing accumulated buffer first")
+                            self.logger.warning("BomeBox F0 Interruption: Current SysEx buffer (isDeluge=\(self.sysExBuffer.prefix(2) == [0xF0, 0x7D])) has \(self.sysExBuffer.count) bytes. First few: \(self.sysExBuffer.prefix(10).map { String(format: "%02X", $0) }). Attempting to process this potentially incomplete message.")
                             #endif
                             let bufferCopy = self.sysExBuffer
                             self.processSysExMessage(bufferCopy)
@@ -1099,11 +1098,13 @@ class MIDIManager: ObservableObject {
                 self.logger.debug("FULL FRAME: Unpacked size: \(unpacked.count). Expected: \(self.expectedFrameSize). Packet starts: \(packetDesc)")
                 #endif
 
-                var finalFrameData = unpacked
                 if unpacked.count < self.expectedFrameSize {
-                    self.logger.warning("Received full OLED data size (\(unpacked.count)) is less than expected (\(self.expectedFrameSize)). Padding with zeros.")
-                    finalFrameData.append(contentsOf: [UInt8](repeating: 0, count: self.expectedFrameSize - unpacked.count))
-                } else if unpacked.count > self.expectedFrameSize {
+                    self.logger.error("Corrupted Full OLED Frame: Unpacked size (\(unpacked.count)) is less than expected (\(self.expectedFrameSize)). Discarding frame. Packet starts: \(bytes.prefix(10).map { String(format: "%02X", $0) })")
+                    return // Exit processing for this message
+                }
+                
+                var finalFrameData = unpacked
+                if unpacked.count > self.expectedFrameSize {
                     self.logger.warning("Received full OLED data size (\(unpacked.count)) is greater than expected (\(self.expectedFrameSize)). Truncating.")
                     finalFrameData = Array(unpacked.prefix(self.expectedFrameSize))
                 }

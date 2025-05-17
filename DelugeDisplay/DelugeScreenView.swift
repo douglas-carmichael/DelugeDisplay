@@ -281,7 +281,7 @@ struct DelugeScreenView: View {
                     #if DEBUG
                     localLogger.error("Failed to create image destination")
                     #endif
-                    return
+                    return 
                 }
                 let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
                 CGImageDestinationAddImage(destination, finalImage, properties as CFDictionary)
@@ -329,7 +329,7 @@ struct DelugeScreenView: View {
                     #if DEBUG
                     logger.error("Failed to create image destination for instance screenshot")
                     #endif
-                    return
+                    return 
                 }
                 let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
                 CGImageDestinationAddImage(destination, image, properties as CFDictionary)
@@ -488,10 +488,8 @@ struct DelugeScreenView: View {
             switch midiManager.displayMode {
             case .oled:
                 OLEDViewContent(screenWidth: screenWidth, screenHeight: screenHeight, blocksHigh: blocksHigh)
-                    .zIndex(1)
             case .sevenSegment:
                 SevenSegmentViewContent()
-                    .zIndex(0)
             }
         }
         .id(midiManager.displayMode)
