@@ -2,6 +2,7 @@ import Foundation
 import OSLog
 
 private let logger = Logger(subsystem: "com.delugedisplay", category: "RLEDecoder")
+private var pendingPacket: [UInt8] = []
 
 enum RLEError: Error {
     case truncatedData
@@ -10,12 +11,18 @@ enum RLEError: Error {
 func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
     var dst = [UInt8]()
     var s = 0
-    let end = min(data.count, maxBytes)
+    var workingData = data
+    if !pendingPacket.isEmpty {
+        workingData = pendingPacket + data
+        pendingPacket = []
+    }
+    
+    let end = min(workingData.count, maxBytes)
     dst.reserveCapacity(end * 2)
     
     while s < end {
-        guard s < data.count else { break }
-        let first = data[s]
+        guard s < workingData.count else { break }
+        let first = workingData[s]
         s += 1
         
         if first < 64 {
@@ -28,11 +35,9 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             else if first < 60 { size = 5; off = 28 }
             else { continue }
             
-            if s + size > data.count {
-                #if DEBUG
-                logger.error("Dense packet truncated")
-                #endif
-                throw RLEError.truncatedData
+            if s + size > workingData.count {
+                pendingPacket = Array(workingData[s-1..<workingData.count])
+                break
             }
             
             if dst.count + size > maxBytes {
@@ -44,7 +49,7 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             
             let highBits = first - UInt8(off)
             for j in 0..<size {
-                var byte = data[s + j] & 0x7F
+                var byte = workingData[s + j] & 0x7F
                 if (highBits & (1 << j)) != 0 {
                     byte |= 0x80
                 }
@@ -59,13 +64,19 @@ func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
             var runLen = Int(marker >> 1)
             
             if runLen == 31 {
-                if s >= data.count { break }
-                runLen = 31 + Int(data[s])
+                if s >= workingData.count {
+                    pendingPacket = Array(workingData[s-1..<workingData.count])
+                    break
+                }
+                runLen = 31 + Int(workingData[s])
                 s += 1
             }
             
-            if s >= data.count { break }
-            var byte = data[s] & 0x7F
+            if s >= workingData.count {
+                pendingPacket = Array(workingData[s-1..<workingData.count])
+                break
+            }
+            var byte = workingData[s] & 0x7F
             if high {
                 byte |= 0x80
             }
