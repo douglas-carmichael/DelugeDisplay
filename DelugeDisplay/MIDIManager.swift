@@ -2,6 +2,7 @@ import Foundation
 import CoreMIDI
 import SwiftUI
 import OSLog
+import os
 
 @MainActor
 class MIDIManager: ObservableObject {
@@ -1233,7 +1234,7 @@ class MIDIManager: ObservableObject {
     private let screenHeight = 48
     private let bytesPerRow = 128
     private let numRows = 6
-    private let logger = Logger(subsystem: "com.delugedisplay", category: "MIDIManager")
+    private let logger = Logger(subsystem: "com.dcarmich.DelugeDisplay", category: "MIDIManager")
     private let delugePortName = ""
     private let frameQueue = DispatchQueue(label: "com.delugedisplay.framequeue")
     private var client: MIDIClientRef = 0
@@ -1263,4 +1264,7 @@ class MIDIManager: ObservableObject {
         }
     }
     private var bomeBoxHeaderSkipCountdown = 0
+    private var sysexBufferLock = NSLock()
+    private var sysexBuffer: Data = Data()
+    private var isDelugeSysExInProgress: Bool = false
 }
