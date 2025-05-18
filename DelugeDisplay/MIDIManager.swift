@@ -1028,23 +1028,28 @@ class MIDIManager: ObservableObject {
                     continue
                 }
 
-                if byte == 0xf0 {
+                if byte == 0xf0 { // SysEx Start
                     if self.isProcessingSysEx && !self.sysExBuffer.isEmpty {
-                        if self.sysExBuffer.prefix(2) == [0xF0, 0x7D] {
-                            // This is a valid Deluge message that got interrupted
+                        // A SysEx message was in progress and is being interrupted.
+                        if self.sysExBuffer.prefix(2) == [0xF0, 0x7D] { // Deluge specific message
                             #if DEBUG
-                            self.logger.warning("BomeBox F0 Interruption: Current SysEx buffer (isDeluge=\(self.sysExBuffer.prefix(2) == [0xF0, 0x7D])) has \(self.sysExBuffer.count) bytes. First few: \(self.sysExBuffer.prefix(10).map { String(format: "%02X", $0) }). Attempting to process this potentially incomplete message.")
+                            self.logger.warning("SysEx Interruption by new F0: Previous Deluge SysEx (size: \(self.sysExBuffer.count), data: \(self.sysExBuffer.prefix(10).map { String(format: "%02X", $0) })) was incomplete. Discarding.")
                             #endif
-                            let bufferCopy = self.sysExBuffer
-                            self.processSysExMessage(bufferCopy)
+                            // DO NOT process this incomplete Deluge message.
+                        } else {
+                            // Non-Deluge SysEx or unknown state, just log and discard.
+                            #if DEBUG
+                            self.logger.debug("SysEx Interruption by new F0: Previous non-Deluge/unknown SysEx (size: \(self.sysExBuffer.count), data: \(self.sysExBuffer.prefix(10).map { String(format: "%02X", $0) })) was in progress. Discarding.")
+                            #endif
                         }
+                        // Clear the buffer for the interrupted message
                         self.sysExBuffer.removeAll()
                     }
+                    // Start the new SysEx message
                     self.sysExBuffer = [byte]
                     self.isProcessingSysEx = true
-                    self.bomeBoxHeaderSkipCountdown = 0
-                    
-                } else if byte == 0xf7 && self.isProcessingSysEx {
+                    self.bomeBoxHeaderSkipCountdown = 0 // Reset if it was active
+                } else if byte == 0xf7 && self.isProcessingSysEx { // SysEx End
                     self.sysExBuffer.append(byte)
                     let bufferCopy = self.sysExBuffer
                     #if DEBUG
@@ -1054,17 +1059,17 @@ class MIDIManager: ObservableObject {
                     self.sysExBuffer.removeAll()
                     self.isProcessingSysEx = false
                     self.bomeBoxHeaderSkipCountdown = 0
-                    
-                } else if self.isProcessingSysEx {
+                } else if self.isProcessingSysEx { // Accumulating bytes for an ongoing SysEx
                     if self.sysExBuffer.count < self.maxSysExSize {
                         self.sysExBuffer.append(byte)
                     } else {
-                        self.logger.error("SysEx buffer overflow. Max size: \(self.maxSysExSize). Discarding message.")
+                        self.logger.error("SysEx buffer overflow. Max size: \(self.maxSysExSize). Discarding message and clearing buffer.")
                         self.sysExBuffer.removeAll()
                         self.isProcessingSysEx = false
-                        self.bomeBoxHeaderSkipCountdown = 0
+                        self.bomeBoxHeaderSkipCountdown = 0 // Reset countdown
                     }
                 }
+                // If byte is not F0, not F7, and not isProcessingSysEx, it's ignored.
             }
 
             if self.isConnected || self.isWaitingForConnection {
@@ -1264,7 +1269,4 @@ class MIDIManager: ObservableObject {
         }
     }
     private var bomeBoxHeaderSkipCountdown = 0
-    private var sysexBufferLock = NSLock()
-    private var sysexBuffer: Data = Data()
-    private var isDelugeSysExInProgress: Bool = false
 }
