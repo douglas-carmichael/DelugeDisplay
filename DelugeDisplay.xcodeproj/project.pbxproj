@@ -372,7 +372,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = 93MRT2PBY5;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = DelugeDisplayPlugin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DelugeDisplayPlugin;
@@ -389,7 +389,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.monitusapps.DelugeDisplayiOS.DelugeDisplayPlugin;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS.DelugeDisplayPlugin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
@@ -412,7 +412,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = 93MRT2PBY5;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = DelugeDisplayPlugin/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DelugeDisplayPlugin;
@@ -429,7 +429,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.monitusapps.DelugeDisplayiOS.DelugeDisplayPlugin;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS.DelugeDisplayPlugin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
@@ -634,7 +634,7 @@
 				CODE_SIGN_ENTITLEMENTS = DelugeDisplayiOS/DelugeDisplayiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 93MRT2PBY5;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = DelugeDisplayiOS/Info.plist;
@@ -651,7 +651,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.monitusapps.DelugeDisplayiOS;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -671,7 +671,7 @@
 				CODE_SIGN_ENTITLEMENTS = DelugeDisplayiOS/DelugeDisplayiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 93MRT2PBY5;
+				DEVELOPMENT_TEAM = 7VLPNC6E86;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = DelugeDisplayiOS/Info.plist;
@@ -688,7 +688,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.monitusapps.DelugeDisplayiOS;
+				PRODUCT_BUNDLE_IDENTIFIER = net.dcarmich.DelugeDisplayiOS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
