@@ -11,7 +11,8 @@ struct SevenSegmentDisplayView: View {
     private var activeColor: Color {
         switch midiManager.displayColorMode {
         case .normal: return .red
-        case .inverted: return .black 
+        case .inverted: return .black
+        case .green_on_black: return Color(red: 0, green: 0.8, blue: 0)
         }
     }
 
@@ -19,6 +20,7 @@ struct SevenSegmentDisplayView: View {
         switch midiManager.displayColorMode {
         case .normal: return Color(red: 0.2, green: 0, blue: 0)
         case .inverted: return .white
+        case .green_on_black: return Color(red: 0, green: 0.2, blue: 0)
         }
     }
 
@@ -26,6 +28,7 @@ struct SevenSegmentDisplayView: View {
         switch midiManager.displayColorMode {
         case .normal: return .black
         case .inverted: return .white
+        case .green_on_black: return .black
         }
     }
 

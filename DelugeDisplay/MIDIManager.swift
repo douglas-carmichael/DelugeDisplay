@@ -854,10 +854,13 @@ class MIDIManager: ObservableObject {
         
         if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
             do {
+                #if DEBUG
                 self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
+                #endif
                 let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
+                #if DEBUG
                 self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
-                
+                #endif
                 if unpacked.count == self.expectedFrameSize { 
                     self.frameBuffer = unpacked
                 } else {

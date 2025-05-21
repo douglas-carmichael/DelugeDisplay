@@ -8,4 +8,5 @@ enum DelugeDisplayMode: String {
 enum DelugeDisplayColorMode: String, CaseIterable {
     case normal = "White on Black"
     case inverted = "Black on White"
+    case green_on_black = "Green on Black"
 }

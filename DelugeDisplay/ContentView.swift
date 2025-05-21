@@ -27,7 +27,7 @@ struct ContentView: View {
     
     var body: some View {
         ZStack { // Root ZStack for background color
-            Color(midiManager.displayColorMode == .normal ? .black : .white)
+            Color(midiManager.displayColorMode == .inverted ? .white : .black)
                 .ignoresSafeArea()
             
             VStack(spacing: 0) { // Main content VStack
@@ -48,8 +48,7 @@ struct ContentView: View {
                         GeometryReader { geometryInZStack in
                             DelugeFont.renderText(
                                 "WAITING FOR DELUGE",
-                                color: midiManager.displayColorMode == .normal ? .white : .black
-                            )
+                                color: midiManager.displayColorMode == .normal ? .white : (midiManager.displayColorMode == .green_on_black ? Color(red: 0, green: 0.8, blue: 0) : .black))
                         }
                     }
                 }

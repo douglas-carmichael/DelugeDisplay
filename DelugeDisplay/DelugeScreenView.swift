@@ -41,6 +41,9 @@ struct DelugeScreenView: View {
         case .inverted:
             backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
             foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        case .green_on_black:
+            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+            foregroundColor = CGColor(red: 0, green: 0.8, blue: 0, alpha: 1.0)
         }
         
         context.setFillColor(backgroundColor)
@@ -144,6 +147,9 @@ struct DelugeScreenView: View {
         case .inverted:
             backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
             foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+        case .green_on_black:
+            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
+            foregroundColor = CGColor(red: 0, green: 0.8, blue: 0, alpha: 1.0)
         }
         
         context.setFillColor(backgroundColor)
@@ -366,8 +372,25 @@ struct DelugeScreenView: View {
                 // Use explicit name 'graphicsContext'
                 Canvas { graphicsContext, size in
                     // Explicitly define SwiftUI Colors
-                    let swiftBackgroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .black : .white)
-                    let swiftForegroundColor: SwiftUI.Color = Color(midiManager.displayColorMode == .normal ? .white : .black)
+                    let swiftBackgroundColor: SwiftUI.Color = {
+                        switch midiManager.displayColorMode {
+                        case .normal, .green_on_black:
+                            return Color.black
+                        case .inverted:
+                            return Color.white
+                        }
+                    }()
+                    
+                    let swiftForegroundColor: SwiftUI.Color = {
+                        switch midiManager.displayColorMode {
+                        case .normal:
+                            return Color.white
+                        case .inverted:
+                            return Color.black
+                        case .green_on_black:
+                            return Color(red: 0, green: 0.8, blue: 0)
+                        }
+                    }()
 
                     // Explicitly define Shading
                     let backgroundShading: GraphicsContext.Shading = GraphicsContext.Shading.color(swiftBackgroundColor)
