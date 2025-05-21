@@ -62,6 +62,13 @@ Pre-built versions of DelugeDisplay can be downloaded from the [Releases page](h
 2.  Download the latest `.dmg` or `.zip` file for macOS.
 3.  Open the downloaded file and drag `DelugeDisplay.app` to your Applications folder.
 
+### Branches
+
+- `main`: Stable full-frame version (BomeBox and Ethernet MIDI compatible)
+- `ios-delta`: Experimental delta rendering and iOS support (may cause issues over MIDI-over-Ethernet)
+
+Contributors welcome to help modularize or re-integrate delta rendering without breaking MIDI-over-Ethernet setups.
+
 ## Building and Running
 
 1.  Clone the repository.
