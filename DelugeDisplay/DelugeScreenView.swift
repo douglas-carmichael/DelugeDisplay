@@ -168,11 +168,11 @@ struct DelugeScreenView: View {
         var inset: CGFloat = 0.0
         if isPixelGridMode {
             let targetLitProportion: CGFloat = 0.78
-            let minPixelGapInOutputImage: CGFloat = 1.0 // Gap at least 1px in output
+            let minPhysicalGapPoints: CGFloat = 1.0 // Gap at least 1px in output
 
             let desiredLitDim = pixelBlockSize * targetLitProportion
             let initialGap = pixelBlockSize - desiredLitDim
-            let finalGap = max(minPixelGapInOutputImage, initialGap)
+            let finalGap = max(minPhysicalGapPoints, initialGap)
             inset = max(0, finalGap / 2.0)
         }
 

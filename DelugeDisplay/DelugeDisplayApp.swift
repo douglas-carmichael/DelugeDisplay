@@ -132,6 +132,12 @@ struct DelugeDisplayApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!midiManager.isConnected)
+                
+                Button("Refresh Display") {
+                    midiManager.refreshDisplay()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(!midiManager.isConnected)
             }
             
             CommandGroup(replacing: .sidebar) { // This is the main "View" menu

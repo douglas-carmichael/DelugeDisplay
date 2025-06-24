@@ -964,6 +964,23 @@ class MIDIManager: ObservableObject {
         self.initialProbeCompletedOrModeSet = false
     }
     
+    func refreshDisplay() {
+        #if DEBUG
+        logger.info("Refreshing display - clearing buffers and requesting fresh data for mode: \(self.displayMode.rawValue)")
+        #endif
+        
+        // Clear the appropriate display buffer
+        switch self.displayMode {
+        case .oled:
+            clearFrameBuffer()
+        case .sevenSegment:
+            clearSevenSegmentData()
+        }
+        
+        // Request fresh data from the Deluge
+        requestDisplayData(forMode: self.displayMode)
+    }
+    
     private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
     private let frameUpdateQueue = DispatchQueue(label: "com.delugedisplay.frame", qos: .userInteractive)
     private let expectedFrameSize = 768 
