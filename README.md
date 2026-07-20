@@ -97,5 +97,3 @@ Contributors welcome to help modularize or re-integrate delta rendering without 
 ## Contributing
 
 Contributions, bug reports, and feature requests are welcome! Please open an issue or submit a pull request.
-
-*(You might want to add a LICENSE file and a section here linking to it if you plan to make this open source more formally.)*
