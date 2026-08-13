@@ -1,0 +1,64 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+DelugeDisplay is a macOS SwiftUI app that mirrors the display of a Synthstrom Deluge groovebox over MIDI SysEx — either the 128×48 OLED or the 4-digit 7-segment display. Pure Apple frameworks (SwiftUI, AppKit, CoreMIDI, OSLog); no package manager and no third-party dependencies. Single app target `DelugeDisplay`, bundle id `net.dcarmich.DelugeDisplay`, deployment target macOS 15.4. Sandboxed with `device.usb` and `files.user-selected.read-write` entitlements (MIDI access + the screenshot save panel).
+
+## Build & run
+
+```sh
+open DelugeDisplay.xcodeproj      # develop in Xcode; run with Cmd+R
+xcodebuild -project DelugeDisplay.xcodeproj -scheme DelugeDisplay -configuration Debug build
+```
+
+- **There is no test target, linter, or formatter** — don't look for or invent test commands. Verification is manual: build and run against a Deluge connected via MIDI (without hardware you can still confirm the app builds and shows the "WAITING FOR DELUGE" banner).
+- App version is `MARKETING_VERSION` in `project.pbxproj` (update both Debug and Release blocks).
+- Releases are hand-distributed as .dmg/.zip via GitHub Releases; there is no CI in this repo.
+
+## Branches
+
+- `main` — uses the firmware's **subscription/push** display mode: the app renews a 2 s lease and the Deluge pushes RLE deltas only when its screen changes, with periodic and on-error full-image resyncs on the app side. (Historically `main` was full-frame polling "for Ethernet compatibility"; the delta failures behind that rule were traced to since-fixed transport bugs in this app — `MIDIPacketList` value-copying, chunk reordering, interleaved-message corruption — not to the delta protocol.)
+- `ios-delta` — old experimental delta rendering + iOS support; superseded by `main`'s subscription mode.
+
+`applyDeltaRLE` in `RLEDecoder.swift` still has **no callers** — it decodes an older multi-record delta format; the current firmware's single-region delta (`40 02 start len`, units of 8 bytes) is decoded inline in `processSysExMessage`. Other vestigial code on `main`: `View+Introspect.swift` (unused) and `DelugeScreenView`'s instance methods `saveScreenshot()`/`createImage` (the live screenshot path is the static `saveScreenshotFromCurrentDisplay`).
+
+## Architecture
+
+Everything flows through **`MIDIManager`** (`MIDIManager.swift`), a `@MainActor ObservableObject` owning all non-view state: the CoreMIDI client/ports, port scanning and auto/re-connect, the SysEx protocol, the connection state machine, and the published display state (`frameBuffer`, `sevenSegmentDigits`/`sevenSegmentDots`, `isConnected`, plus user prefs — display mode, color mode, smoothing, pixel grid). `DelugeDisplayApp` creates it as a `@StateObject` and injects it with `.environmentObject`; views read it and set properties on it, never talk MIDI themselves.
+
+### MIDIManager is a single, shared instance
+`DelugeDisplayApp` owns the only `MIDIManager` (`@StateObject`) and hands it to `AppDelegate` via `.onAppear` (`appDelegate.midiManager`), whose `applicationWillTerminate` disconnect acts on it. Never construct a second manager — a second instance opens its own CoreMIDI client that connects and subscribes to the Deluge in parallel.
+
+### SysEx protocol (manufacturer id 0x7D)
+Requests (constants at the bottom of `MIDIManager`):
+- `F0 7D 02 00 02 F7` — subscribe/renew the display push lease (2 s on the firmware side); `F0 7D 02 00 03 F7` — same, but forces a full-image resend. Steady state is these two, driven by the maintenance timer.
+- `F0 7D 02 00 01 F7` — request one full OLED frame (connection probe / `connectionTimer`)
+- `F0 7D 02 01 00 F7` — request 7-segment data (probe)
+- `F0 7D 02 00 04 F7` — toggle which display the Deluge hardware shows (sent on every mode switch)
+
+Responses (parsed in `processSysExMessage`; bytes are reassembled between `F0`/`F7` in `reassembleSysEx` on `processQueue`, which skips interleaved realtime bytes and whole channel/system-common messages):
+- OLED full image: `F0 7D 02 40 01 00 …` — payload from byte 6 is RLE-packed; `unpack7to8RLE` (`RLEDecoder.swift`) must expand it to exactly 768 bytes or a resync is scheduled.
+- OLED delta (push): `F0 7D 02 40 02 <start> <len> …` — start/len in 8-byte units into the 768-byte buffer; payload from byte 7 must unpack to exactly `8*len` bytes or a resync is scheduled.
+- 7-seg: exactly 12 bytes, `F0 7D 02 41 …` — byte 6 is the dot bitmask, bytes 7–10 the segment bitmasks for the 4 digits (bit 6 → segment A … bit 0 → segment G, decoded in `SevenSegmentDigitView`).
+
+Frame buffer layout (SSD1306-style pages): 768 bytes = 6 blocks × 128 columns; each byte is a vertical 8-pixel strip, `byteIndex = block * 128 + col`, bit n = row within the block.
+
+### Connection lifecycle (all timer-driven, inside MIDIManager)
+1. Port selection (`selectedPort.didSet`) → `connectToDeluge` resolves input/output endpoints by port *name*.
+2. `startDisplayModeProbe`: request OLED, 0.5 s timeout → request 7-seg, 0.5 s timeout → fall back to the saved mode. The first response wins and sets the initial mode; receiving any valid frame is what flips `isConnected`.
+3. A repeating 50 ms `updateTimer` maintains the subscription: renews the lease every 1 s, forces a full-image resync every 8 s or after any rejected delta, and logs a notice (in release builds too) when a forced resync goes unanswered for 1.5 s; a 2 s `connectionTimer` retries connection, and CoreMIDI change notifications rescan ports / reconnect the remembered port.
+4. `displayLogicGeneration` (bumped on every mode change) is captured by timers and re-checked when they fire, so timers from a previous mode become no-ops. **Any change to mode switching or timers must respect this generation guard.** The 7SEG→OLED transition additionally waits 75 ms after sending the toggle before requesting data (see `displayMode.didSet` — the trickiest code in the app).
+
+### Rendering
+- `ContentView` switches between `DelugeScreenView` (OLED), `SevenSegmentDisplayView` (7-seg), and a "WAITING FOR DELUGE" banner drawn with `DelugeFont` (a hand-defined 5×7 bitmap font) when disconnected.
+- The OLED live view is a SwiftUI `Canvas` that accumulates every lit pixel into a single `Path` and fills it with one draw call (`OLEDViewContent`) — per-pixel fills stall the RenderBox encoder queue — with optional pixel-grid insets and blur-based "smoothing". Screenshots go through a **separate, duplicated** CGContext path (`createCGImageForScreenshot`); 7-seg screenshots use `ImageRenderer`.
+- **`DelugeDisplayColorMode` colors are re-derived independently in ~5 places**: the OLED canvas, both screenshot paths, `SevenSegmentDisplayView`, the `ContentView` background, and the `DelugeFont` call site. Adding or changing a color mode means updating all of them.
+- Menus live in `DelugeDisplayApp.commands` (the View menu replaces `.sidebar`; a custom MIDI menu lists ports as toggles). Window behavior — minimum size, hard 8:3 aspect ratio, zoom commands — is `AppDelegate` acting as window delegate.
+
+## Conventions
+
+- Logging is OSLog: `Logger(subsystem: "com.delugedisplay", category: <TypeName>)`, with nearly every call wrapped in `#if DEBUG`. Follow that pattern.
+- User prefs persist via `UserDefaults.standard` writes inside the `didSet` of the corresponding `@Published` property, and are read back in `MIDIManager.init`. New prefs should do the same.
+- All MIDI/display state mutation happens on the MainActor; CoreMIDI callbacks hop over via `Task { @MainActor … }`.

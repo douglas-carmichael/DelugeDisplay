@@ -427,7 +427,12 @@ struct DelugeScreenView: View {
                         vInset = max(0, finalGapH / 2.0)
                     }
                     
-                    // Pixel drawing loop
+                    // Pixel drawing loop: accumulate every lit pixel into ONE path and
+                    // fill it with a single draw call. A fill per pixel (thousands per
+                    // frame on dense screens) lands as individual draws on the RenderBox
+                    // encoder queue, which the main thread blocks on mid display-cycle —
+                    // at the self-clocked frame rate that reads as UI stutter.
+                    var pixelsPath = Path()
                     for blk in 0..<blocksHigh {
                         for rowInBlock in 0..<8 {
                             let mask = UInt8(1 << rowInBlock)
@@ -435,13 +440,13 @@ struct DelugeScreenView: View {
                                 let srcCol = col
                                 let srcBlk = blk
                                 let byteIndex = srcBlk * screenWidth + srcCol
-                                
+
                                 guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
-                                
+
                                 let sourceByte = currentFrameBuffer[byteIndex]
                                 let byteToRender = sourceByte
                                 let pixelOn = (byteToRender & mask) != 0
-                                
+
                                 if pixelOn {
                                     let canvasX = CGFloat(col) * canvasPixelWidth
                                     let physicalRow = blk * 8 + rowInBlock
@@ -453,15 +458,15 @@ struct DelugeScreenView: View {
                                     let rectHeight = max(0, canvasPixelHeight - (2 * vInset))
 
                                     if rectWidth > 0 && rectHeight > 0 {
-                                        // Define CGRect, Path, and fill explicitly
-                                        let pixelRect: CGRect = CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight)
-                                        let pixelPath: Path = Path(pixelRect)
-                                        graphicsContext.fill(pixelPath, with: foregroundShading)
+                                        pixelsPath.addRect(CGRect(x: rectX, y: rectY, width: rectWidth, height: rectHeight))
                                     }
                                 }
                             } // End col loop
                         } // End rowInBlock loop
                     } // End blk loop
+                    if !pixelsPath.isEmpty {
+                        graphicsContext.fill(pixelsPath, with: foregroundShading)
+                    }
                 } // End Canvas closure
                 .blur(radius: oledBlurRadius)
                 .frame(width: drawWidth, height: drawHeight)

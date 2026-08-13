@@ -2,7 +2,9 @@ import Cocoa
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    @ObservedObject var midiManager = MIDIManager()
+    // Injected by DelugeDisplayApp; constructing our own MIDIManager here would open
+    // a second CoreMIDI client that connects and polls the Deluge in parallel.
+    var midiManager: MIDIManager?
     let minWidth: CGFloat = 512  // 128 * 4 in points
     let minHeight: CGFloat = 192  // 48 * 4 in points
     var aboutWindow: NSWindow?
@@ -167,7 +169,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        midiManager.disconnect()
+        midiManager?.disconnect()
     }
     
     @objc func showAboutWindow() {

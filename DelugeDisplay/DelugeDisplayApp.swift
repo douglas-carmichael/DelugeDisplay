@@ -117,6 +117,9 @@ struct DelugeDisplayApp: App {
                 .environmentObject(midiManager)
                 .frame(minWidth: 192, minHeight: 96) // Consider if this minHeight needs to be 140 as in ContentView or if ContentView's is sufficient
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onAppear {
+                    appDelegate.midiManager = midiManager
+                }
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 384, height: 192) // This is the initial size

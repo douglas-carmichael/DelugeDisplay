@@ -319,7 +319,7 @@ class MIDIManager: ObservableObject {
         }
         
         status = MIDIInputPortCreateWithBlock(client, "Input" as CFString, &inputPort) { [weak self] packetList, _ in
-            self?.handleMIDIPacketList(packetList.pointee)
+            self?.handleMIDIPacketList(packetList)
         }
         guard status == noErr else {
             #if DEBUG
@@ -426,6 +426,11 @@ class MIDIManager: ObservableObject {
         self.isSettingInitialMode = false
         self.initialProbeCompletedOrModeSet = false
         self.hasAttemptedSevenSegmentProbe = false
+        self.lastFrameTime = .distantPast
+        self.lastRenewalTime = .distantPast
+        self.lastFullResyncTime = .distantPast
+        self.pendingForceSince = nil
+        self.resyncNeeded = false
 
         clearFrameBuffer()
         clearSevenSegmentData()
@@ -591,7 +596,7 @@ class MIDIManager: ObservableObject {
         // Capture the passed 'generation'
         let capturedGenerationForTimer = generation
         #if DEBUG
-        logger.debug("Starting regular display update timer for mode: \(modeForThisTimer.rawValue) with interval \(self.updateInterval)s. Generation: \(capturedGenerationForTimer)")
+        logger.debug("Starting display subscription maintenance timer for mode: \(modeForThisTimer.rawValue) with interval \(self.updateInterval)s. Generation: \(capturedGenerationForTimer)")
         #endif
         
         let newTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] timerThatFired in
@@ -629,10 +634,28 @@ class MIDIManager: ObservableObject {
             #endif
             return
         }
-        let shouldRequest = (self.isConnected || self.isWaitingForConnection) && Date().timeIntervalSince(self.lastPacketTime) > self.updateInterval
-        
-        if shouldRequest {
-            self.requestDisplayData(forMode: mode)
+        guard self.isConnected || self.isWaitingForConnection else { return }
+
+        // Subscription maintenance. The firmware pushes display changes on its own
+        // while our lease holds, so steady-state silence is normal — this timer only
+        // renews the lease, forces a full-image resync periodically (and after any
+        // rejected delta), and complains when a forced resync goes unanswered: the
+        // one signal that the Deluge/Bome side has actually stalled. The notice is
+        // deliberately not #if DEBUG so release builds can attribute a frozen mirror.
+        let now = Date()
+        if let forceSince = self.pendingForceSince {
+            if now.timeIntervalSince(forceSince) > self.forceResponseTimeout {
+                if self.isConnected {
+                    self.logger.notice("Watchdog: full-image resync unanswered; no \(mode.rawValue, privacy: .public) frame for \(now.timeIntervalSince(self.lastFrameTime), format: .fixed(precision: 2))s. Re-forcing.")
+                }
+                self.sendDisplaySubscription(force: true)
+            }
+        }
+        else if self.resyncNeeded || now.timeIntervalSince(self.lastFullResyncTime) > self.fullResyncInterval {
+            self.sendDisplaySubscription(force: true)
+        }
+        else if now.timeIntervalSince(self.lastRenewalTime) > self.subscriptionRenewalInterval {
+            self.sendDisplaySubscription(force: false)
         }
     }
     
@@ -659,6 +682,22 @@ class MIDIManager: ObservableObject {
             sysExCommand = self.sysExRequestSevenSegment
         }
         self.sendSysEx(sysExCommand)
+    }
+
+    // Subscription upkeep. `force: false` renews the firmware's 2-second push lease
+    // (the Deluge then sends display data only when its screen changes, throttled by
+    // its own send-buffer backpressure); `force: true` additionally makes it resend
+    // the whole image — used for the initial frame, the periodic resync, and
+    // recovery whenever a delta fails validation.
+    private func sendDisplaySubscription(force: Bool) {
+        let now = Date()
+        self.lastRenewalTime = now
+        if force {
+            self.lastFullResyncTime = now
+            self.pendingForceSince = now
+            self.resyncNeeded = false
+        }
+        self.sendSysEx(force ? self.sysExSubscribeDisplayForce : self.sysExSubscribeDisplay)
     }
     
     private func sendDisplayToggleCommand() {
@@ -763,86 +802,86 @@ class MIDIManager: ObservableObject {
         }
     }
     
-    private func handleMIDIPacketList(_ packetList: MIDIPacketList) {
-        var listCopy = packetList // Work with a mutable copy
-
-        guard listCopy.numPackets > 0 else {
-            return
+    private nonisolated func handleMIDIPacketList(_ packetListPtr: UnsafePointer<MIDIPacketList>) {
+        // MIDIPacket declares a fixed 256-byte data field, but CoreMIDI stores larger
+        // packets (and every packet after the first) contiguously in the list's own
+        // allocation, past the struct bounds. Network/virtual sources like Bome
+        // coalesce big SysEx into exactly such packets, so the bytes must be copied
+        // out via the original pointer — a struct copy severs everything past 256
+        // bytes and walks garbage memory on multi-packet lists.
+        var chunks: [[UInt8]] = []
+        let dataOffset = MemoryLayout<MIDIPacket>.offset(of: \.data)!
+        for packetPtr in packetListPtr.unsafeSequence() {
+            let length = Int(packetPtr.pointee.length)
+            guard length > 0, length <= self.maxSysExSize else { continue }
+            let dataPtr = UnsafeRawPointer(packetPtr) + dataOffset
+            chunks.append([UInt8](UnsafeRawBufferPointer(start: dataPtr, count: length)))
         }
+        guard !chunks.isEmpty else { return }
 
-        withUnsafePointer(to: &listCopy.packet) { firstPacketPointer in
-            var pCurrentPacket: UnsafePointer<MIDIPacket> = firstPacketPointer
+        let capturedChunks = chunks
+        processQueue.async { [weak self] in
+            self?.reassembleSysEx(capturedChunks)
+        }
+    }
 
-            for i in 0 ..< Int(listCopy.numPackets) {
-                let packet = pCurrentPacket.pointee
-            
-                let length = Int(packet.length)
-                guard length > 0, length <= self.maxSysExSize else {
-                    Task { @MainActor [weak self, length] in
-                        self?.logger.error("Received MIDI packet with invalid length (\(length)). Flushing buffer.")
-                        self?.sysExBuffer.removeAll()
-                        self?.isProcessingSysEx = false
-                    }
-                    if i < Int(listCopy.numPackets) - 1 {
-                        let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
-                        pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
-                    }
+    // Runs only on processQueue (which serializes it); sysExBuffer/isProcessingSysEx
+    // are confined to that queue. Complete messages hop to the MainActor — one hop per
+    // message, not per byte chunk — so a high frame rate can't back the main thread up
+    // with parsing work, and chunk-level reordering can no longer corrupt reassembly.
+    private nonisolated func reassembleSysEx(_ chunks: [[UInt8]]) {
+        for chunk in chunks {
+            for byte in chunk {
+                if byte >= 0xf8 {
+                    // Realtime bytes (clock, active sensing, …) may be interleaved
+                    // anywhere — including mid-SysEx — and never affect parse state.
                     continue
                 }
-            
-                var bytesArray = [UInt8](repeating: 0, count: length)
-                withUnsafeBytes(of: packet.data) { rawBufferPtr in
-                    let sourcePtr = rawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                    bytesArray.withUnsafeMutableBytes { destRawBufferPtr in
-                        let destPtr = destRawBufferPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                        destPtr.initialize(from: sourcePtr, count: length)
-                    }
+                if interleavedDataBytesToSkip > 0 && byte < 0x80 {
+                    interleavedDataBytesToSkip -= 1
+                    continue
                 }
-            
-                let capturedBytesArray = bytesArray
-                processQueue.async { [weak self, capturedBytesArray] in
-                    Task { @MainActor in
-                        self?.processSingleMIDIMessageOnBackgroundQueue(capturedBytesArray)
+                if byte == 0xf0 {
+                    sysExBuffer.removeAll(keepingCapacity: true)
+                    sysExBuffer.append(byte)
+                    isProcessingSysEx = true
+                    interleavedDataBytesToSkip = 0
+                } else if byte == 0xf7 && isProcessingSysEx {
+                    sysExBuffer.append(byte)
+                    let message = sysExBuffer
+                    sysExBuffer.removeAll(keepingCapacity: true)
+                    isProcessingSysEx = false
+                    Task { @MainActor [weak self] in
+                        self?.processSysExMessage(message)
                     }
-                }
-            
-                if i < Int(listCopy.numPackets) - 1 {
-                    let nextPacketMutablePtr = MIDIPacketNext(pCurrentPacket)
-                    pCurrentPacket = UnsafePointer(nextPacketMutablePtr)
+                } else if byte >= 0x80 {
+                    // A channel/system-common status mid-stream. Strict MIDI says this
+                    // aborts an in-progress SysEx, but Bome/BomeBox merging can lawfully
+                    // land whole messages (sequencer notes, CCs, song position) between
+                    // SysEx chunks — aborting here kills a display frame every time the
+                    // Deluge plays. Skip the message and its data bytes instead; a frame
+                    // that really was corrupted still fails the 768-byte size check.
+                    interleavedDataBytesToSkip = Self.dataByteCount(forStatus: byte)
+                } else if isProcessingSysEx {
+                    if sysExBuffer.count < maxSysExSize {
+                        sysExBuffer.append(byte)
+                    } else {
+                        logger.error("SysEx buffer overflow. Max size: \(self.maxSysExSize). Discarding message.")
+                        sysExBuffer.removeAll(keepingCapacity: true)
+                        isProcessingSysEx = false
+                    }
                 }
             }
         }
     }
 
-    private func processSingleMIDIMessageOnBackgroundQueue(_ bytes: [UInt8]) {
-        Task { @MainActor [weak self, bytes] in
-            guard let self = self else { return }
-
-            for byte in bytes {
-                if byte == 0xf0 {
-                    self.sysExBuffer.removeAll()
-                    self.sysExBuffer.append(byte)
-                    self.isProcessingSysEx = true
-                } else if byte == 0xf7 && self.isProcessingSysEx {
-                    self.sysExBuffer.append(byte)
-                    let bufferCopy = self.sysExBuffer
-                    self.processSysExMessage(bufferCopy)
-                    self.sysExBuffer.removeAll()
-                    self.isProcessingSysEx = false
-                } else if self.isProcessingSysEx {
-                    if self.sysExBuffer.count < self.maxSysExSize {
-                        self.sysExBuffer.append(byte)
-                    } else {
-                        self.logger.error("SysEx buffer overflow. Max size: \(self.maxSysExSize). Discarding message.")
-                        self.sysExBuffer.removeAll()
-                        self.isProcessingSysEx = false
-                    }
-                }
-            }
-
-            if self.isConnected || self.isWaitingForConnection {
-                self.lastPacketTime = Date()
-            }
+    private nonisolated static func dataByteCount(forStatus status: UInt8) -> Int {
+        switch status {
+        case 0xc0...0xdf: return 1          // program change, channel pressure
+        case 0x80...0xef: return 2          // note on/off, poly pressure, CC, pitch bend
+        case 0xf1, 0xf3: return 1           // MTC quarter frame, song select
+        case 0xf2: return 2                 // song position pointer
+        default: return 0                   // tune request, undefined, stray EOX
         }
     }
 
@@ -852,20 +891,41 @@ class MIDIManager: ObservableObject {
         let wasConnectedInitially = self.isConnected
         var dataReceived = false
         
-        if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
+        if bytes.count >= 8 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
             do {
-                #if DEBUG
-                self.logger.debug("Received raw OLED SysEx. MIDI Packet Payload size (for RLE decoding): \(bytes[6...(bytes.count - 2)].count) bytes.")
-                #endif
-                let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
-                #if DEBUG
-                self.logger.debug("OLED data unpacked. Actual unpacked count: \(unpacked.count). Expected frame size (for buffer): \(self.expectedFrameSize).")
-                #endif
-                if unpacked.count == self.expectedFrameSize { 
-                    self.frameBuffer = unpacked
-                } else {
-                    self.logger.error("Received OLED data size (\(unpacked.count)) does not match expected (\(self.expectedFrameSize)). Clearing buffer.")
-                    self.clearFrameBuffer() 
+                switch bytes[4] {
+                case 0x01: // full image, RLE packed — probe replies and explicit full requests
+                    let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
+                    if unpacked.count == self.expectedFrameSize {
+                        self.frameBuffer = unpacked
+                    } else {
+                        self.logger.error("Full OLED image unpacked to \(unpacked.count) bytes, expected \(self.expectedFrameSize). Scheduling resync.")
+                        self.resyncNeeded = true
+                    }
+
+                case 0x02: // subscription delta: bytes[5] = start, bytes[6] = length, both in 8-byte units
+                    guard bytes.count >= 9 else {
+                        self.resyncNeeded = true
+                        break
+                    }
+                    let start = Int(bytes[5]) * 8
+                    let length = Int(bytes[6]) * 8
+                    guard length > 0, start + length <= self.expectedFrameSize,
+                          self.frameBuffer.count == self.expectedFrameSize else {
+                        self.resyncNeeded = true
+                        break
+                    }
+                    let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: length)
+                    if unpacked.count == length {
+                        self.frameBuffer.replaceSubrange(start..<(start + length), with: unpacked)
+                    } else {
+                        self.logger.error("OLED delta unpacked to \(unpacked.count) bytes, expected \(length). Scheduling resync.")
+                        self.resyncNeeded = true
+                    }
+
+                default:
+                    // 0x00 (plain 7-to-8 packing, no RLE) is never requested by this app.
+                    break
                 }
 
                 if !self.isConnected { self.isConnected = true }
@@ -880,7 +940,9 @@ class MIDIManager: ObservableObject {
                 #if DEBUG
                 logger.error("Error unpacking OLED data: \(error.localizedDescription)")
                 #endif
+                self.resyncNeeded = true
             }
+            handleFrameResponse(ofType: .oled)
         } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 { // 7-Seg
             self.sevenSegmentDots = bytes[6]
             self.sevenSegmentDigits = [bytes[7], bytes[8], bytes[9], bytes[10]]
@@ -894,6 +956,7 @@ class MIDIManager: ObservableObject {
                 #endif
                 setInitialDisplayMode(.sevenSegment)
             }
+            handleFrameResponse(ofType: .sevenSegment)
         }
         
         if dataReceived && !wasConnectedInitially && self.isConnected {
@@ -902,6 +965,15 @@ class MIDIManager: ObservableObject {
              #endif
              if self.isWaitingForConnection { self.isWaitingForConnection = false }
         }
+    }
+
+    // Bookkeeping for pushed frames. Only frames for the active mode count: a stray
+    // frame of the other display type must not satisfy an outstanding forced resync,
+    // or the mirror could stay stale while off-mode data keeps arriving.
+    private func handleFrameResponse(ofType type: DelugeDisplayMode) {
+        guard type == self.displayMode else { return }
+        self.lastFrameTime = Date()
+        self.pendingForceSince = nil
     }
 
     func disconnect() {
@@ -962,6 +1034,11 @@ class MIDIManager: ObservableObject {
         self.isSettingInitialMode = false
         self.hasAttemptedSevenSegmentProbe = false
         self.initialProbeCompletedOrModeSet = false
+        self.lastFrameTime = .distantPast
+        self.lastRenewalTime = .distantPast
+        self.lastFullResyncTime = .distantPast
+        self.pendingForceSince = nil
+        self.resyncNeeded = false
     }
     
     func refreshDisplay() {
@@ -977,8 +1054,9 @@ class MIDIManager: ObservableObject {
             clearSevenSegmentData()
         }
         
-        // Request fresh data from the Deluge
-        requestDisplayData(forMode: self.displayMode)
+        // Force a full-image resync through the subscription on the next maintenance
+        // tick (the menu item is only enabled while connected, so the timer is running).
+        self.resyncNeeded = true
     }
     
     private let processQueue = DispatchQueue(label: "com.delugedisplay.process", qos: .userInteractive)
@@ -1001,15 +1079,28 @@ class MIDIManager: ObservableObject {
     private var outputPort: MIDIPortRef = 0
     private var delugeInput: MIDIEndpointRef?
     private var delugeOutput: MIDIEndpointRef?
-    private var sysExBuffer: [UInt8] = []
+    // Confined to processQueue — never touch from the MainActor.
+    private nonisolated(unsafe) var sysExBuffer: [UInt8] = []
+    private nonisolated(unsafe) var isProcessingSysEx = false
+    private nonisolated(unsafe) var interleavedDataBytesToSkip = 0
     private var connectionTimer: Timer?
-    private var lastPacketTime = Date()
-    private var isProcessingSysEx = false
+    private var lastFrameTime: Date = .distantPast
+    // Subscription state: the firmware pushes display updates while its 2-second
+    // lease keeps getting renewed; a forced renewal resends the whole image.
+    private var lastRenewalTime: Date = .distantPast
+    private var lastFullResyncTime: Date = .distantPast
+    private var pendingForceSince: Date?
+    private var resyncNeeded = false
+    private let subscriptionRenewalInterval: TimeInterval = 1.0
+    private let fullResyncInterval: TimeInterval = 8.0
+    private let forceResponseTimeout: TimeInterval = 1.5
     private var lastScanTime: Date = Date()
     private let minimumScanInterval: TimeInterval = 1.0
     private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]
     private let sysExRequestSevenSegment: [UInt8] = [0xf0, 0x7d, 0x02, 0x01, 0x00, 0xf7]
     private let sysExToggleDisplayScreen: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x04, 0xf7]
+    private let sysExSubscribeDisplay: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x02, 0xf7]
+    private let sysExSubscribeDisplayForce: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x03, 0xf7]
     private var probeTimer: Timer?
     private var hasAttemptedSevenSegmentProbe: Bool = false
     private var lastSelectedPortName: String? {
