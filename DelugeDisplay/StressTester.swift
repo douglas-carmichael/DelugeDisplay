@@ -156,7 +156,7 @@ class StressTester: ObservableObject {
             break
         }
         let interval = shape.usesInterval ? UInt8(clamping: intervalCs) : 0
-        let cap = UInt32(clamping: capSecs) & 0x3FFF
+        let cap = UInt32(clamping: min(capSecs, 16383))
 
         live = StressHostStats()
         live.runStartedAt = Date()
@@ -265,7 +265,12 @@ class StressTester: ObservableObject {
         }
         let stored = UInt16(frame[765]) | (UInt16(frame[766]) << 8)
         if crc16CCITT(frame[0..<762]) != stored {
+            // A CRC failure means the stamp is exactly as untrustworthy as the
+            // content — a desynced buffer can carry a garbage sequence number that
+            // would explode the drop count. Record it and keep it out of the
+            // sequence/gap accounting.
             live.crcFailures += 1
+            return
         }
         if let last = live.lastSeq {
             let forward = (seq &- last) & 0xFFFFFF
@@ -320,6 +325,9 @@ class StressTester: ObservableObject {
         ackDeadline = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.phase == .starting else { return }
+                // The start may have succeeded with only the ack lost — stop any
+                // orphaned run before giving up.
+                self.stop()
                 self.failStart("No reply from device")
             }
         }
