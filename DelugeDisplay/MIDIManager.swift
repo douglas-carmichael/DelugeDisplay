@@ -431,6 +431,7 @@ class MIDIManager: ObservableObject {
         self.lastFullResyncTime = .distantPast
         self.pendingForceSince = nil
         self.resyncNeeded = false
+        self.forceRetryInterval = self.forceRetryBaseInterval
 
         clearFrameBuffer()
         clearSevenSegmentData()
@@ -637,16 +638,21 @@ class MIDIManager: ObservableObject {
         guard self.isConnected || self.isWaitingForConnection else { return }
 
         // Subscription maintenance. The firmware pushes display changes on its own
-        // while our lease holds, so steady-state silence is normal — this timer only
-        // renews the lease, forces a full-image resync periodically (and after any
-        // rejected delta), and complains when a forced resync goes unanswered: the
-        // one signal that the Deluge/Bome side has actually stalled. The notice is
-        // deliberately not #if DEBUG so release builds can attribute a frozen mirror.
+        // while our lease holds, so steady-state silence is normal — this timer
+        // renews the lease, schedules the (rare) full-image resyncs, and complains
+        // when a forced resync goes unanswered: the one signal that the Deluge/Bome
+        // side has actually stalled. The notice is deliberately not #if DEBUG so
+        // release builds can attribute a frozen mirror. Re-forces back off
+        // exponentially: a storm of force/full-image pairs is exactly the pattern
+        // that charges CoreMIDI's feedback-loop detector (see fullResyncInterval),
+        // and hammering a genuinely stalled device only queues redundant requests
+        // it will answer all at once when it recovers.
         let now = Date()
         if let forceSince = self.pendingForceSince {
-            if now.timeIntervalSince(forceSince) > self.forceResponseTimeout {
+            if now.timeIntervalSince(forceSince) > self.forceRetryInterval {
+                self.forceRetryInterval = min(self.forceRetryInterval * 2, self.forceRetryMaxInterval)
                 if self.isConnected {
-                    self.logger.notice("Watchdog: full-image resync unanswered; no \(mode.rawValue, privacy: .public) frame for \(now.timeIntervalSince(self.lastFrameTime), format: .fixed(precision: 2))s. Re-forcing.")
+                    self.logger.notice("Watchdog: full-image resync unanswered; no \(mode.rawValue, privacy: .public) frame for \(now.timeIntervalSince(self.lastFrameTime), format: .fixed(precision: 2))s. Re-forcing; next retry in \(self.forceRetryInterval, format: .fixed(precision: 0))s.")
                 }
                 self.sendDisplaySubscription(force: true)
             }
@@ -974,6 +980,7 @@ class MIDIManager: ObservableObject {
         guard type == self.displayMode else { return }
         self.lastFrameTime = Date()
         self.pendingForceSince = nil
+        self.forceRetryInterval = self.forceRetryBaseInterval
     }
 
     func disconnect() {
@@ -1039,6 +1046,7 @@ class MIDIManager: ObservableObject {
         self.lastFullResyncTime = .distantPast
         self.pendingForceSince = nil
         self.resyncNeeded = false
+        self.forceRetryInterval = self.forceRetryBaseInterval
     }
     
     func refreshDisplay() {
@@ -1092,8 +1100,18 @@ class MIDIManager: ObservableObject {
     private var pendingForceSince: Date?
     private var resyncNeeded = false
     private let subscriptionRenewalInterval: TimeInterval = 1.0
-    private let fullResyncInterval: TimeInterval = 8.0
-    private let forceResponseTimeout: TimeInterval = 1.5
+    // Full-image forces must stay rare and isolated. macOS 26's CoreMIDI treats
+    // repeated force-request/full-image-reply pairs on one cable as a MIDI feedback
+    // loop ("feedback loop from MIDI source" in MIDIServer's log) and mutes the
+    // source for 10-25 s at a time — the Aug 2026 playback-stall bug. Steady-state
+    // renewals + delta pushes never trip the detector, and neither do single forces
+    // from a cold start; forces repeated within tens of seconds do, and the
+    // detector's suspicion takes a minute or two to decay. Hence a periodic resync
+    // measured in minutes, and watchdog retries that back off instead of storming.
+    private let fullResyncInterval: TimeInterval = 300.0
+    private let forceRetryBaseInterval: TimeInterval = 5.0
+    private let forceRetryMaxInterval: TimeInterval = 60.0
+    private var forceRetryInterval: TimeInterval = 5.0
     private var lastScanTime: Date = Date()
     private let minimumScanInterval: TimeInterval = 1.0
     private let sysExRequestOLED: [UInt8] = [0xf0, 0x7d, 0x02, 0x00, 0x01, 0xf7]

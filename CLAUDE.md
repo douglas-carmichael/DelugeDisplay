@@ -30,7 +30,7 @@ Everything flows through **`MIDIManager`** (`MIDIManager.swift`), a `@MainActor 
 
 ### SysEx protocol (manufacturer id 0x7D)
 Requests (constants at the bottom of `MIDIManager`):
-- `F0 7D 02 00 02 F7` — subscribe/renew the display push lease (2 s on the firmware side); `F0 7D 02 00 03 F7` — same, but forces a full-image resend. Steady state is these two, driven by the maintenance timer.
+- `F0 7D 02 00 02 F7` — subscribe/renew the display push lease (2 s on the firmware side); `F0 7D 02 00 03 F7` — same, but forces a full-image resend. Steady state is renewals only; forces are deliberately rare (see lifecycle §3).
 - `F0 7D 02 00 01 F7` — request one full OLED frame (connection probe / `connectionTimer`)
 - `F0 7D 02 01 00 F7` — request 7-segment data (probe)
 - `F0 7D 02 00 04 F7` — toggle which display the Deluge hardware shows (sent on every mode switch)
@@ -45,7 +45,7 @@ Frame buffer layout (SSD1306-style pages): 768 bytes = 6 blocks × 128 columns; 
 ### Connection lifecycle (all timer-driven, inside MIDIManager)
 1. Port selection (`selectedPort.didSet`) → `connectToDeluge` resolves input/output endpoints by port *name*.
 2. `startDisplayModeProbe`: request OLED, 0.5 s timeout → request 7-seg, 0.5 s timeout → fall back to the saved mode. The first response wins and sets the initial mode; receiving any valid frame is what flips `isConnected`.
-3. A repeating 50 ms `updateTimer` maintains the subscription: renews the lease every 1 s, forces a full-image resync every 8 s or after any rejected delta, and logs a notice (in release builds too) when a forced resync goes unanswered for 1.5 s; a 2 s `connectionTimer` retries connection, and CoreMIDI change notifications rescan ports / reconnect the remembered port.
+3. A repeating 50 ms `updateTimer` maintains the subscription: renews the lease every 1 s, forces a full-image resync every 5 min or after any rejected delta, and logs a notice (in release builds too) when a forced resync goes unanswered, retrying with exponential backoff (5 s → 60 s, reset on any received frame). **Full-image forces must stay rare and spaced out**: repeated force/full-image-reply cycles trip macOS 26 CoreMIDI's feedback-loop detector, which mutes the Deluge's source for 10–25 s at a time (`MIDIServer` logs "feedback loop from MIDI source") — the cause of the Aug 2026 playback-stall bug. Steady-state renewals + deltas and isolated single forces never trip it. A 2 s `connectionTimer` retries connection, and CoreMIDI change notifications rescan ports / reconnect the remembered port.
 4. `displayLogicGeneration` (bumped on every mode change) is captured by timers and re-checked when they fire, so timers from a previous mode become no-ops. **Any change to mode switching or timers must respect this generation guard.** The 7SEG→OLED transition additionally waits 75 ms after sending the toggle before requesting data (see `displayMode.didSet` — the trickiest code in the app).
 
 ### Rendering
