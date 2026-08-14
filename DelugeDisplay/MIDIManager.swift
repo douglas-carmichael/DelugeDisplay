@@ -656,6 +656,13 @@ class MIDIManager: ObservableObject {
                 }
                 self.sendDisplaySubscription(force: true)
             }
+            else if now.timeIntervalSince(self.lastRenewalTime) > self.subscriptionRenewalInterval {
+                // Keep the firmware's 2 s lease alive while the re-force backoff
+                // waits — a retry gap longer than the lease would end lease-bound
+                // work (the stress exerciser) and delay push resumption after a
+                // stall clears.
+                self.sendDisplaySubscription(force: false)
+            }
         }
         else if self.resyncNeeded || now.timeIntervalSince(self.lastFullResyncTime) > self.fullResyncInterval {
             self.sendDisplaySubscription(force: true)

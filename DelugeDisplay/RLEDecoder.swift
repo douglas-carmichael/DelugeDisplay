@@ -10,11 +10,14 @@ enum RLEError: Error {
 func unpack7to8RLE(_ data: [UInt8], maxBytes: Int) throws -> ([UInt8], Int) {
     var dst = [UInt8]()
     var s = 0
-    let end = min(data.count, maxBytes)
-    dst.reserveCapacity(end * 2)
-    
-    while s < end {
-        guard s < data.count else { break }
+    dst.reserveCapacity(maxBytes)
+
+    // maxBytes bounds the *output*. The input scan must run to the end of the
+    // packed payload: incompressible content packs larger than it unpacks (a
+    // dense packet spends 6 bytes per 5 encoded), so an input scan clamped at
+    // maxBytes silently truncates exactly the frames that pack worst.
+    while s < data.count {
+        if dst.count >= maxBytes { break }
         let first = data[s]
         s += 1
         
