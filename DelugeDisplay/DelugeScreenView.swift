@@ -8,106 +8,6 @@ struct DelugeScreenView: View {
     private let screenWidth = 128
     private let screenHeight = 48
     private let blocksHigh = 6
-    private let minimumScale: CGFloat = 2.0
-    
-    private let logger = Logger(subsystem: "com.delugedisplay", category: "DelugeScreenView")
-    
-    private func createImage(width: Int, height: Int, scale: Int = 1) -> CGImage? {
-        let scaledWidth = width * scale
-        let scaledHeight = height * scale
-        
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
-        guard let context = CGContext(data: nil,
-                              width: scaledWidth,
-                              height: scaledHeight,
-                              bitsPerComponent: 8,
-                              bytesPerRow: scaledWidth * 4,
-                              space: colorSpace,
-                              bitmapInfo: bitmapInfo.rawValue) else {
-            #if DEBUG
-            logger.error("Failed to create CGContext for createImage")
-            #endif
-            return nil
-        }
-        
-        let backgroundColor: CGColor
-        let foregroundColor: CGColor
-        
-        switch midiManager.displayColorMode {
-        case .normal:
-            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
-            foregroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
-        case .inverted:
-            backgroundColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
-            foregroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
-        case .green_on_black:
-            backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1.0)
-            foregroundColor = CGColor(red: 0, green: 0.8, blue: 0, alpha: 1.0)
-        }
-        
-        context.setFillColor(backgroundColor)
-        context.fill(CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
-        
-        context.setFillColor(foregroundColor)
-        
-        let currentFrameBuffer = midiManager.frameBuffer
-        
-        guard !currentFrameBuffer.isEmpty, currentFrameBuffer.count == self.screenWidth * self.blocksHigh else {
-            #if DEBUG
-            logger.info("Frame buffer is invalid or empty for createImage.")
-            #endif
-            return context.makeImage()
-        }
-
-        let isPixelGridMode = midiManager.oledPixelGridModeEnabled
-        let pixelBlockSize = CGFloat(scale)
-
-        var inset: CGFloat = 0.0
-        if isPixelGridMode {
-            let targetLitProportion: CGFloat = 0.78
-            let minPixelGapInOutputImage: CGFloat = 1.0 // Gap at least 1px in output
-
-            let desiredLitDim = pixelBlockSize * targetLitProportion
-            let initialGap = pixelBlockSize - desiredLitDim
-            let finalGap = max(minPixelGapInOutputImage, initialGap)
-            inset = max(0, finalGap / 2.0)
-        }
-
-        context.translateBy(x: 0, y: CGFloat(scaledHeight))
-        context.scaleBy(x: 1.0, y: -1.0)
-
-        for blk in 0..<self.blocksHigh {
-            for rowInBlock in 0..<8 {
-                let mask = UInt8(1 << rowInBlock)
-                for col in 0..<self.screenWidth {
-                    
-                    let byteIndex = blk * self.screenWidth + col
-                    
-                    guard byteIndex >= 0 && byteIndex < currentFrameBuffer.count else { continue }
-                    let sourceByte = currentFrameBuffer[byteIndex]
-                    
-                    let pixelOn = (sourceByte & mask) != 0
-                    
-                    if pixelOn {
-                        let cgX = CGFloat(col * scale)
-                        let cgY = CGFloat((blk * 8 + rowInBlock) * scale)
-
-                        let rectX = cgX + inset
-                        let rectY = cgY + inset // Use the original cgY, the context transform handles flipping
-                        let rectSide = pixelBlockSize - (2 * inset)
-
-                        if rectSide > 0 {
-                             context.fill(CGRect(x: rectX, y: rectY, width: rectSide, height: rectSide))
-                        } else if !isPixelGridMode {
-                             context.fill(CGRect(x: cgX, y: cgY, width: pixelBlockSize, height: pixelBlockSize))
-                        }
-                    }
-                }
-            }
-        }
-        return context.makeImage()
-    }
 
     private static func createCGImageForScreenshot(
         frameBuffer: [UInt8],
@@ -290,63 +190,12 @@ struct DelugeScreenView: View {
             }
         }
     }
-        
-    func saveScreenshot() {
-        guard midiManager.displayMode == .oled else {
-            #if DEBUG
-            logger.info("Screenshot currently only supported for OLED display mode.")
-            #endif
-            return
-        }
-        guard let image = createImage(width: screenWidth, height: screenHeight, scale: 4) else {
-            #if DEBUG
-            logger.error("Failed to create image for screenshot")
-            #endif
-            return
-        }
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
-        let timestamp = dateFormatter.string(from: Date())
-        let filename = "DelugeDisplay_OLED_\(timestamp).png"
-        let savePanel = NSSavePanel()
-        savePanel.nameFieldStringValue = filename
-        savePanel.allowedContentTypes = [UTType.png]
-        savePanel.canCreateDirectories = true
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-                    #if DEBUG
-                    logger.error("Failed to create image destination")
-                    #endif
-                    return
-                }
-                let properties = [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144]
-                CGImageDestinationAddImage(destination, image, properties as CFDictionary)
-                if !CGImageDestinationFinalize(destination) {
-                    #if DEBUG
-                    logger.error("Failed to save screenshot")
-                    #endif
-                }
-            }
-        }
-    }
-    
+
     private struct OLEDViewContent: View {
         @EnvironmentObject var midiManager: MIDIManager
         let screenWidth: Int
         let screenHeight: Int
         let blocksHigh: Int
-
-        // flipByte function (not used in this rendering logic)
-        private func flipByte(_ byte: UInt8) -> UInt8 {
-            var flipped: UInt8 = 0
-            for i in 0..<8 {
-                if (byte & (1 << i)) != 0 {
-                    flipped |= (1 << (7 - i))
-                }
-            }
-            return flipped
-        }
 
         var body: some View {
             GeometryReader { geometry in

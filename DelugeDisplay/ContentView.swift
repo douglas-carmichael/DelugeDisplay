@@ -10,21 +10,7 @@ import CoreMIDI
 
 struct ContentView: View {
     @EnvironmentObject var midiManager: MIDIManager
-    // @State private var screenViewRef: DelugeScreenView? // This might not be easily obtainable now
 
-    // If DelugeScreenView.saveScreenshot() is an instance method, we need an instance.
-    // If it's static or on MIDIManager, call it that way.
-    // For now, let's assume DelugeScreenView's instance method is callable via midiManager if it makes sense,
-    // or we call the static one.
-    // The current DelugeScreenView.saveScreenshot() is an instance method.
-    // Let's try calling the static method from DelugeScreenView for now,
-    // as getting a ref to the View struct itself can be tricky.
-    func saveScreenshot() {
-        guard midiManager.isConnected else { return }
-        // Call the static method on DelugeScreenView, passing the midiManager
-        DelugeScreenView.saveScreenshotFromCurrentDisplay(midiManager: midiManager)
-    }
-    
     var body: some View {
         ZStack { // Root ZStack for background color
             Color(midiManager.displayColorMode == .inverted ? .white : .black)

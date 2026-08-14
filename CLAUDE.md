@@ -19,10 +19,7 @@ xcodebuild -project DelugeDisplay.xcodeproj -scheme DelugeDisplay -configuration
 
 ## Branches
 
-- `main` — uses the firmware's **subscription/push** display mode: the app renews a 2 s lease and the Deluge pushes RLE deltas only when its screen changes, with periodic and on-error full-image resyncs on the app side. (Historically `main` was full-frame polling "for Ethernet compatibility"; the delta failures behind that rule were traced to since-fixed transport bugs in this app — `MIDIPacketList` value-copying, chunk reordering, interleaved-message corruption — not to the delta protocol.)
-- `ios-delta` — old experimental delta rendering + iOS support; superseded by `main`'s subscription mode.
-
-`applyDeltaRLE` in `RLEDecoder.swift` still has **no callers** — it decodes an older multi-record delta format; the current firmware's single-region delta (`40 02 start len`, units of 8 bytes) is decoded inline in `processSysExMessage`. Other vestigial code on `main`: `View+Introspect.swift` (unused) and `DelugeScreenView`'s instance methods `saveScreenshot()`/`createImage` (the live screenshot path is the static `saveScreenshotFromCurrentDisplay`).
+- `main` — uses the firmware's **subscription/push** display mode: the app renews a 2 s lease and the Deluge pushes RLE deltas only when its screen changes, with periodic and on-error full-image resyncs on the app side. (Historically `main` was full-frame polling "for Ethernet compatibility"; the delta failures behind that rule were traced to since-fixed transport bugs in this app — `MIDIPacketList` value-copying, chunk reordering, interleaved-message corruption — not to the delta protocol. An old `ios-delta` experiment branch was superseded by this and deleted.)
 
 ## Architecture
 
@@ -54,7 +51,7 @@ Frame buffer layout (SSD1306-style pages): 768 bytes = 6 blocks × 128 columns; 
 ### Rendering
 - `ContentView` switches between `DelugeScreenView` (OLED), `SevenSegmentDisplayView` (7-seg), and a "WAITING FOR DELUGE" banner drawn with `DelugeFont` (a hand-defined 5×7 bitmap font) when disconnected.
 - The OLED live view is a SwiftUI `Canvas` that accumulates every lit pixel into a single `Path` and fills it with one draw call (`OLEDViewContent`) — per-pixel fills stall the RenderBox encoder queue — with optional pixel-grid insets and blur-based "smoothing". Screenshots go through a **separate, duplicated** CGContext path (`createCGImageForScreenshot`); 7-seg screenshots use `ImageRenderer`.
-- **`DelugeDisplayColorMode` colors are re-derived independently in ~5 places**: the OLED canvas, both screenshot paths, `SevenSegmentDisplayView`, the `ContentView` background, and the `DelugeFont` call site. Adding or changing a color mode means updating all of them.
+- **`DelugeDisplayColorMode` colors are re-derived independently in 5 places**: the OLED canvas, the OLED screenshot path (`createCGImageForScreenshot`), `SevenSegmentDisplayView`, the `ContentView` background, and the `DelugeFont` call site. Adding or changing a color mode means updating all of them.
 - Menus live in `DelugeDisplayApp.commands` (the View menu replaces `.sidebar`; a custom MIDI menu lists ports as toggles). Window behavior — minimum size, hard 8:3 aspect ratio, zoom commands — is `AppDelegate` acting as window delegate.
 
 ## Conventions
