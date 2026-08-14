@@ -157,9 +157,31 @@ struct DelugeDisplayApp: App {
             
             CommandMenu("MIDI") {
                 midiPortItems
+                Divider()
+                StressTestCommand()
+                    .disabled(!midiManager.isConnected)
             }
             
             CommandGroup(replacing: .saveItem) { }
         }
+
+        Window("Stress Test", id: "stressTest") {
+            StressTestView()
+                .environmentObject(midiManager)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.topTrailing)
+    }
+}
+
+/// Wrapped in its own View so @Environment(\.openWindow) is available inside .commands.
+private struct StressTestCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Stress Test…") {
+            openWindow(id: "stressTest")
+        }
+        .keyboardShortcut("t", modifiers: [.command, .shift])
     }
 }

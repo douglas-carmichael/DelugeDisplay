@@ -42,6 +42,12 @@ Responses (parsed in `processSysExMessage`; bytes are reassembled between `F0`/`
 
 Frame buffer layout (SSD1306-style pages): 768 bytes = 6 blocks × 128 columns; each byte is a vertical 8-pixel strip, `byteIndex = block * 128 + col`, bit n = row within the block.
 
+### Stress test panel (display SysEx family 0x03)
+Host side of the firmware's display link stress exerciser (spec: `docs/deluge-firmware-spec-display-midi-exerciser.md`; firmware branch `feature/display-stress-exerciser`). MIDI menu → "Stress Test…" (⇧⌘T) opens a `Window` scene backed by `StressTester` (model, owned lazily by `MIDIManager`) + `StressTestView`.
+- Requests `F0 7D 02 03 <sub> … F7`: `00` stop, `01` start (`shape, interval, p1, p2, seed[4], capSecs[2]`, all LSB-first 7-bit), `02` query stats, `03` reset stats. Replies `F0 7D 02 43 <sub> …`: acks carry a status byte (0 ok / 1 bad param / 2 refused / 3 no OLED); stats carry a layout-version byte then a `pack_8bit_to_7bit` payload (plain Sequential packing — decoded by `StressTester.unpack7to8`, distinct from the RLE codec).
+- During a run the firmware stamps framebuffer bytes 762–767 (24-bit LE sequence, CRC-16/CCITT-FALSE over bytes 0..761, `0x5A` marker). `processSysExMessage` reports every OLED message to `stressTester.noteDisplayMessage`, which verifies stamps on the reconstructed buffer: sequence gaps = drops, CRC mismatch = corruption/desync, regression = reorder. Device counters are polled at 1 Hz and reconciled against host receipt counts.
+- `StressTester` is deliberately a **separate ObservableObject**: per-frame counters are plain vars republished at 10 Hz, because any `@Published` churn on `MIDIManager` invalidates the OLED canvas.
+
 ### Connection lifecycle (all timer-driven, inside MIDIManager)
 1. Port selection (`selectedPort.didSet`) → `connectToDeluge` resolves input/output endpoints by port *name*.
 2. `startDisplayModeProbe`: request OLED, 0.5 s timeout → request 7-seg, 0.5 s timeout → fall back to the saved mode. The first response wins and sets the initial mode; receiving any valid frame is what flips `isConnected`.

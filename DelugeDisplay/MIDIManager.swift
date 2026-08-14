@@ -891,6 +891,19 @@ class MIDIManager: ObservableObject {
         }
     }
 
+    // MARK: - Stress exerciser (display SysEx family 0x03; see StressTester.swift)
+
+    lazy var stressTester: StressTester = {
+        let tester = StressTester()
+        tester.midi = self
+        return tester
+    }()
+
+    /// Raw egress for the stress tester's commands, on the same cable as everything else.
+    func sendStressSysEx(_ bytes: [UInt8]) {
+        sendSysEx(bytes)
+    }
+
     private func processSysExMessage(_ bytes: [UInt8]) {
         guard bytes.count >= 5, bytes[0] == 0xf0, bytes[1] == 0x7d else { return }
 
@@ -898,12 +911,14 @@ class MIDIManager: ObservableObject {
         var dataReceived = false
         
         if bytes.count >= 8 && bytes[2] == 0x02 && bytes[3] == 0x40 && bytes.last == 0xf7 { // OLED
+            var stressApplied = false
             do {
                 switch bytes[4] {
                 case 0x01: // full image, RLE packed — probe replies and explicit full requests
                     let (unpacked, _) = try unpack7to8RLE(Array(bytes[6...(bytes.count - 2)]), maxBytes: self.expectedFrameSize)
                     if unpacked.count == self.expectedFrameSize {
                         self.frameBuffer = unpacked
+                        stressApplied = true
                     } else {
                         self.logger.error("Full OLED image unpacked to \(unpacked.count) bytes, expected \(self.expectedFrameSize). Scheduling resync.")
                         self.resyncNeeded = true
@@ -924,6 +939,7 @@ class MIDIManager: ObservableObject {
                     let (unpacked, _) = try unpack7to8RLE(Array(bytes[7...(bytes.count - 2)]), maxBytes: length)
                     if unpacked.count == length {
                         self.frameBuffer.replaceSubrange(start..<(start + length), with: unpacked)
+                        stressApplied = true
                     } else {
                         self.logger.error("OLED delta unpacked to \(unpacked.count) bytes, expected \(length). Scheduling resync.")
                         self.resyncNeeded = true
@@ -948,6 +964,8 @@ class MIDIManager: ObservableObject {
                 #endif
                 self.resyncNeeded = true
             }
+            stressTester.noteDisplayMessage(applied: stressApplied, byteCount: bytes.count,
+                                            frame: stressApplied ? self.frameBuffer : nil)
             handleFrameResponse(ofType: .oled)
         } else if bytes.count == 12 && bytes[2] == 0x02 && bytes[3] == 0x41 && bytes.last == 0xf7 { // 7-Seg
             self.sevenSegmentDots = bytes[6]
@@ -963,8 +981,11 @@ class MIDIManager: ObservableObject {
                 setInitialDisplayMode(.sevenSegment)
             }
             handleFrameResponse(ofType: .sevenSegment)
+        } else if bytes.count >= 7 && bytes[2] == 0x02 && bytes[3] == 0x43 && bytes.last == 0xf7 {
+            // Stress exerciser replies (acks and stats) — control traffic, not display data.
+            stressTester.handleReply(bytes)
         }
-        
+
         if dataReceived && !wasConnectedInitially && self.isConnected {
              #if DEBUG
              self.logger.info("Data received. Connected to Deluge on port: \(self.selectedPort?.name ?? self.lastSelectedPortName ?? "unknown")")
